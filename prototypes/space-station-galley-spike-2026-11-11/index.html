@@ -16,6 +16,8 @@
 <body>
 <canvas id="game"></canvas>
 <script src="config.js"></script>
+<script src="vendor/peerjs.min.js"></script>
+<script src="vendor/qrcode.js"></script>
 <script>
 'use strict';
 // Space Station Galley: a spike. One galley, one shift, 1-4 cooks; gravity cuts out every so often
@@ -33,7 +35,7 @@ const CONTROLS = [
   'P1  WASD move  ·  F grab / place / throw  ·  G chop / dash',
   'P2  Arrows move  ·  .  grab / place / throw  ·  /  chop / dash',
   'Gamepads  stick move  ·  A grab  ·  X chop / dash',
-  'P pause  ·  M mute',
+  'Phones  scan the QR code to join  ·  P pause  ·  M mute',
 ];
 const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 }; // a check may inject one
 const CHEAP = params.get('render') === 'cheap';
@@ -206,6 +208,7 @@ function checkJoins(consume) {
 }
 function makePlayer(r) {
   const [x, y] = SPAWNS[r.i];
+  if (r.ctl.kind === 'phone') { r.ctl.grabSeen = r.ctl.grabN; r.ctl.useSeen = r.ctl.useN; } // title presses don't carry in
   return { r, x, y, vx: 0, vy: 0, z: 0, fx: 0, fy: 1, held: null, dashT: 0, dashCd: 0, chopping: false,
     delivered: 0, chops: 0, catches: 0, tilt: 0, walk: 0 };
 }
@@ -215,6 +218,10 @@ function readInput(p) {
     inp.mx = (down.has(c.r) ? 1 : 0) - (down.has(c.l) ? 1 : 0);
     inp.my = (down.has(c.d) ? 1 : 0) - (down.has(c.u) ? 1 : 0);
     inp.grab = hit.has(c.grab); inp.useHeld = down.has(c.use); inp.usePressed = hit.has(c.use);
+  } else if (c.kind === 'phone') {
+    inp.mx = c.mx; inp.my = c.my; inp.useHeld = c.use;
+    inp.grab = c.grabN > c.grabSeen; c.grabSeen = c.grabN;
+    inp.usePressed = c.useN > c.useSeen; c.useSeen = c.useN;
   } else {
     const gp = padsNow[c.index];
     if (gp) {
@@ -229,6 +236,84 @@ function readInput(p) {
   const m = Math.hypot(inp.mx, inp.my);
   if (m > 1) { inp.mx /= m; inp.my /= m; }
   return inp;
+}
+
+// ---- Phones: a PeerJS room that controller.html joins from a QR code ---------------------
+// The game hosts; each phone opens a data channel and streams its stick and buttons. Presses
+// arrive as running counts, so a lost or late packet never loses or repeats a press.
+// ?phones=0 turns this off. ?ctl=http://192.168.1.10:8000 points the QR at another origin
+// (use it when the game itself is open on localhost, which a phone cannot reach).
+const ROOM_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
+const net = { peer: null, id: '', url: '', status: 'off', error: '', qr: null, start: false, scene: '' };
+const phones = new Map(); // phone's client id -> controller; survives a dropped connection
+function roomId() {
+  const b = crypto.getRandomValues(new Uint8Array(5));
+  return 'ssg-' + Array.from(b, x => ROOM_CHARS[x % ROOM_CHARS.length]).join('');
+}
+function controllerUrl(id) {
+  const u = new URL('controller.html', location.href);
+  if (params.get('ctl')) { const o = new URL(params.get('ctl')); u.protocol = o.protocol; u.host = o.host; }
+  u.search = ''; u.hash = ''; u.searchParams.set('room', id);
+  return u.href;
+}
+function openRoom() {
+  if (!window.Peer || !window.qrcode || params.get('phones') === '0') return;
+  net.id = roomId(); net.url = controllerUrl(net.id); net.status = 'connecting';
+  const q = qrcode(0, 'M'); q.addData(net.url); q.make(); net.qr = q;
+  const peer = new Peer(net.id, { debug: 1 });
+  net.peer = peer;
+  peer.on('open', () => { net.status = 'open'; events.push({ type: 'room', id: net.id, url: net.url }); });
+  peer.on('connection', acceptPhone);
+  peer.on('disconnected', () => { if (!peer.destroyed) { net.status = 'connecting'; setTimeout(() => peer.disconnected && !peer.destroyed && peer.reconnect(), 1500); } });
+  peer.on('error', err => {
+    if (err.type === 'unavailable-id') { peer.destroy(); openRoom(); return; } // room name taken: pick another
+    if (err.type === 'peer-unavailable') return;
+    net.status = 'error'; net.error = err.type; console.warn('phones:', err.type, err);
+  });
+}
+function sendTo(ctl, msg) { if (ctl.conn && ctl.conn.open) ctl.conn.send(msg); }
+function broadcast(msg) { for (const c of phones.values()) sendTo(c, msg); }
+function acceptPhone(conn) {
+  conn.on('data', msg => {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.t === 'hello') {
+      const cid = String(msg.id || conn.peer).slice(0, 40);
+      let ctl = phones.get(cid);
+      if (!ctl) {
+        if (roster.length >= 4) { conn.send({ t: 'full' }); return; }
+        ctl = { kind: 'phone', cid, mx: 0, my: 0, use: false, grabN: 0, useN: 0, grabSeen: 0, useSeen: 0, conn: null };
+        phones.set(cid, ctl);
+      }
+      if (ctl.conn && ctl.conn !== conn) ctl.conn.close();
+      ctl.conn = conn; conn.ctl = ctl;
+      ctl.grabN = ctl.grabSeen = msg.g | 0; ctl.useN = ctl.useSeen = msg.u | 0; // a reloaded phone counts from 0 again
+      if (!roster.some(r => r.ctl === ctl)) join(ctl);
+      const r = roster.find(r => r.ctl === ctl);
+      conn.send({ t: 'you', name: r.name, color: COLORS[r.i].suit, scene, gravity: !state.g || state.g.on });
+      events.push({ type: 'phone', name: r.name });
+      return;
+    }
+    const c = conn.ctl;
+    if (!c || c.conn !== conn) return;
+    if (msg.t === 'in') {
+      const cl = v => Math.max(-1, Math.min(1, Number(v) || 0));
+      c.mx = cl(msg.mx); c.my = cl(msg.my); c.use = !!msg.hold;
+      if ((msg.g | 0) > c.grabN) c.grabN = msg.g | 0;
+      if ((msg.u | 0) > c.useN) c.useN = msg.u | 0;
+    } else if (msg.t === 'start') net.start = true;
+  });
+  conn.on('close', () => { const c = conn.ctl; if (c && c.conn === conn) { c.conn = null; c.mx = c.my = 0; c.use = false; } });
+  conn.on('error', e => console.warn('phone link:', e));
+}
+function drawQr(q, x, y, size) { // white card with a quiet zone, modules snapped to whole pixels
+  const n = q.getModuleCount(), cell = Math.max(1, Math.floor(size / (n + 4))), s = cell * (n + 4);
+  ctx.fillStyle = '#ffffff'; rrect(x, y, s, s, 8); ctx.fill();
+  ctx.fillStyle = '#0b0f1a';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) ctx.fillRect(x + (c + 2) * cell, y + (r + 2) * cell, cell, cell);
+  return s;
+}
+function roomLabel() {
+  return net.status === 'open' ? `room ${net.id.slice(4)}` : net.status === 'connecting' ? 'opening room…' : `phones offline (${net.error || 'no network'})`;
 }
 
 // ---- Items ------------------------------------------------------------------------------
@@ -412,12 +497,12 @@ function startZeroG() {
     }
   }
   for (const p of state.players) { p.vx += (rng() * 2 - 1) * 0.8; p.vy += (rng() * 2 - 1) * 0.8; }
-  sfx.gravOff(); events.push({ type: 'zero-g', t: state.t });
+  sfx.gravOff(); events.push({ type: 'zero-g', t: state.t }); broadcast({ t: 'grav', on: false });
 }
 function endZeroG() {
   const g = state.g;
   g.on = true; g.next = state.t + tune.zero_g_interval + (rng() * 2 - 1) * tune.zero_g_jitter;
-  state.shake = 0.35; sfx.gravOn(); events.push({ type: 'gravity', t: state.t });
+  state.shake = 0.35; sfx.gravOn(); events.push({ type: 'gravity', t: state.t }); broadcast({ t: 'grav', on: true });
 }
 
 function collideTiles(o, rad, bounce) {
@@ -902,6 +987,10 @@ function drawHUD() {
   if (!g.on && since < 1.6) { ctx.globalAlpha = Math.min(1, (1.6 - since) * 2); textOutlined('GRAVITY OFFLINE!', W / 2, 150 + since * 20, 54, '#9fd0ff'); ctx.globalAlpha = 1; }
   // joining hint
   if (state.players.length < 4) text(roster.length < 2 ? 'P2: press .  to join   ·   gamepad: press A' : 'gamepad: press A to join', 24, H - 34, 14, '#6b7690', 'left', 'normal');
+  if (state.players.length < 4 && net.qr && net.status === 'open') { // small QR in the empty left column
+    text('scan to join', 80, 438, 13, '#9aa7b8', 'center', 'normal');
+    drawQr(net.qr, 20, 452, 120);
+  }
 }
 
 const scenes = {
@@ -929,7 +1018,7 @@ const scenes = {
   title: {
     update() {
       checkJoins(true);
-      if (pressed('Enter') || pressed('Space') || padsNow.some((gp, i) => gp && padEdge(i, 9))) {
+      if (pressed('Enter') || pressed('Space') || net.start || padsNow.some((gp, i) => gp && padEdge(i, 9))) {
         if (!roster.length) join(KEYSETS[0]);
         reset(); scene = 'play';
       }
@@ -945,7 +1034,14 @@ const scenes = {
         ctx.fillStyle = r ? '#1d2436' : '#141a28'; rrect(x - 80, y - 110, 160, 190, 16); ctx.fill(); lineStyle(3); ctx.stroke();
         if (r) drawCook({ r, fx: 0, fy: 1, walk: 0, tilt: Math.sin(state.t * 2 + i) * 0.08, held: null, chopping: false }, x, y + 40, 0.15 + 0.06 * Math.sin(state.t * 2 + i), i);
         else text(i === 0 ? 'press F' : i === 1 ? 'press  .' : 'gamepad A', x, y - 10, 18, '#6b7690', 'center', 'normal');
-        text(r ? (r.ctl.kind === 'pad' ? 'gamepad' : 'keyboard') : 'to join', x, y + 62, 14, r ? '#c3ccd8' : '#4a5468', 'center', 'normal');
+        text(r ? ({ pad: 'gamepad', keys: 'keyboard' }[r.ctl.kind] || (r.ctl.conn ? 'phone' : 'phone (lost)')) : 'to join', x, y + 62, 14, r ? '#c3ccd8' : '#4a5468', 'center', 'normal');
+      }
+      if (net.qr) { // scan to join
+        const qx = 1060, qy = 236;
+        text('Scan to join', qx + 90, qy - 26, 18, '#ffe066');
+        const s = drawQr(net.qr, qx, qy, 180);
+        if (net.status !== 'open') { ctx.fillStyle = 'rgba(11,15,26,0.8)'; ctx.fillRect(qx, qy, s, s); }
+        text(roomLabel(), qx + s / 2, qy + s + 18, 14, net.status === 'error' ? '#ff6b6b' : '#9aa7b8', 'center', 'normal');
       }
       CONTROLS.forEach((c, i) => text(c, W / 2, 470 + i * 30, 18, '#c3ccd8', 'center', 'normal'));
       text('Chop, cook, serve soup. When gravity fails, everything loose floats away. Grab it!', W / 2, 610, 18, '#ffe066', 'center', 'normal');
@@ -972,7 +1068,7 @@ const scenes = {
     draw() { scenes.play.draw(); ctx.fillStyle = 'rgba(8,10,18,0.6)'; ctx.fillRect(0, 0, W, H); textOutlined('Paused', W / 2, H / 2, 56, '#fff'); text('P to resume', W / 2, H / 2 + 50, 20, '#c3ccd8'); },
   },
   results: {
-    update() { if (pressed('Enter') || pressed('Space')) { reset(); scene = 'play'; } if (pressed('Escape')) { reset(); scene = 'title'; } },
+    update() { if (pressed('Enter') || pressed('Space') || net.start) { reset(); scene = 'play'; } if (pressed('Escape')) { reset(); scene = 'title'; } },
     draw() {
       scenes.play.draw();
       ctx.fillStyle = 'rgba(8,10,18,0.78)'; ctx.fillRect(0, 0, W, H);
@@ -1003,7 +1099,8 @@ const scenes = {
 function step() {
   readPads();
   if (pressed('KeyM')) { setMuted(!muted); hit.delete('KeyM'); }
-  scenes[scene].update(STEP); hit.clear(); savePads();
+  scenes[scene].update(STEP); hit.clear(); savePads(); net.start = false;
+  if (scene !== net.scene) { net.scene = scene; broadcast({ t: 'scene', scene }); }
 }
 let last, acc = 0, ALPHA = 1;
 function tick() {
@@ -1024,12 +1121,14 @@ window.game = {
   press(code) { hit.add(code); },
   hold(code, on) { on ? down.add(code) : down.delete(code); },
   get events() { return events; },
+  get room() { return { id: net.id, url: net.url, status: net.status, phones: phones.size }; },
   step(n = 1, draw = true, alpha = 1) {
     for (let i = 0; i < n; i++) step();
     if (draw) { ALPHA = alpha; drawFrame(); }
   },
 };
 
+openRoom();
 reset();
 scene = params.get('scene') || 'title';
 if (scene === 'play' && !roster.length) { join(KEYSETS[0]); join(KEYSETS[1]); reset(); }

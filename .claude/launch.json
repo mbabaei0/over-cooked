@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "galley-lan",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8123", "--bind", "0.0.0.0", "--directory", "prototypes/space-station-galley-spike-2026-11-11"],
+      "port": 8123
+    }
+  ]
+}
