@@ -9,6 +9,7 @@ Space Station Galley
 5. Look: keep all (the usual: the spike's 2.5D galley)
 6. How hard: keep all (the usual)
 7. Controls: keep all (keyboard, gamepads, phones)
+After play: love it
 
 **Pitch:** A slapstick co-op cooking game on a space station, where gravity keeps failing and everything you didn't grab floats away mid-order. *(inferred (strong))*
 
@@ -53,7 +54,8 @@ Shift 1 is gentle: two soups, one gravity failure early. Shift 2 adds a conveyor
 - [x] One cheer key: every cook cheers (team signals)
 
 ## Keep
--
+- love it, the whole game as built *(you said)*
+- best moment: everything working smoothly *(you said)*
 
 ## Avoid
 - (none yet)
