@@ -780,6 +780,7 @@ function updateItem(it: Loose, dt: number): void {
   if (it.z <= surf && it.vz <= 0) land(it, t);
 }
 function land(it: Loose, t: Loose): void {
+  if (solid(t) && !t.stand && !isBelt(t)) { toFloorNear(it); return; } // a corner no cook can reach: slide off to the floor
   if (solid(t)) {
     if (t.type === 'H' && it.kind === 'bowl' && it.soup && deliver(it, null)) return;
     if (t.type === 'X') { if (trashItem(it)) return; toFloorNear(it); return; }

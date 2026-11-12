@@ -56,6 +56,7 @@ Shift 1 is gentle: two soups, one gravity failure early. Shift 2 adds a conveyor
 - [x] Shift 4, Dark Side Galley: the power fails with gravity, so only helmet lamps, stoves and the hatch light the kitchen
 - [x] New recipes: Moon Shroom and Sun Pepper, three new soups (Crater Stew, Galaxy Broth, Solar Flare), and Space Slop for a pot that fits no recipe; later shifts add more of them
 - [x] Longer shifts: 5 minutes instead of 3, with star scores raised by a third so stars stay a little easier
+- [x] Corner fix: anything that lands on a corner counter no cook can reach slides off onto the floor
 
 ## Keep
 - love it, the whole game as built *(you said)*
