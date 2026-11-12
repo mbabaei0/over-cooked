@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- PROTOTYPE - NOT FOR PRODUCTION -->
-<!-- Question: Is cooking still fun, and funny, when gravity cuts out and loose ingredients float away? -->
+<!-- Question: Do three shifts, each with its own twist, keep zero-g cooking fresh for 10 minutes, alone with a bot or with friends? -->
 <!-- Date: 2026-11-12 -->
 <!-- Phone controller: opened from the QR code on the game screen (?room=ssg-xxxxx). It joins the
      game's PeerJS room and streams a stick plus two buttons over a WebRTC data channel. -->
@@ -41,6 +41,7 @@
   .btn.down { transform: translateY(5px) scale(.96); box-shadow: 0 1px 0 rgba(0,0,0,.4); filter: brightness(1.15); }
   #grab { width: 132px; height: 132px; background: #5be37a; font-size: 22px; right: 18%; bottom: 14%; }
   #use { width: 108px; height: 108px; background: #ffb36b; font-size: 17px; right: 52%; top: 12%; }
+  #cheer { width: 72px; height: 72px; background: #ffd23f; font-size: 14px; right: 6%; top: 8%; }
   #overlay { position: fixed; inset: 0; background: rgba(8,10,18,.88); display: none; flex-direction: column;
     align-items: center; justify-content: center; gap: 18px; padding: 24px; text-align: center; z-index: 5; }
   #overlay.show { display: flex; }
@@ -53,6 +54,7 @@
     main { flex-direction: column-reverse; }
     #grab { right: 12%; bottom: auto; top: 22%; }
     #use { right: auto; left: 12%; top: 46%; }
+    #cheer { right: auto; left: 8%; top: 8%; }
   }
 </style>
 </head>
@@ -65,6 +67,7 @@
   <div id="pad">
     <div class="btn" id="use">CHOP<small>dash</small></div>
     <div class="btn" id="grab">GRAB<small>place · throw</small></div>
+    <div class="btn" id="cheer">CHEER</div>
   </div>
 </main>
 <div id="overlay"><h1 id="ovTitle"></h1><p id="ovText"></p><button id="ovBtn"></button></div>
@@ -93,8 +96,9 @@ function overlay(title, textMsg, btn, onTap) {
 function buzz(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} }
 function showScene() {
   if (!linked) return;
-  if (scene === 'title') overlay('You’re in!', 'Waiting for everyone to join. Anyone can start the shift.', 'Start shift', () => send({ t: 'start' }));
-  else if (scene === 'results') overlay('Shift over!', 'Check the big screen for your stars.', 'Another shift', () => send({ t: 'start' }));
+  if (scene === 'title') overlay('You’re in!', 'Waiting for everyone to join. Anyone can pick a galley.', 'Pick a galley', () => send({ t: 'start' }));
+  else if (scene === 'select') overlay('Pick a galley', 'Choose a shift on the big screen, or start the one picked.', 'Start shift', () => send({ t: 'start' }));
+  else if (scene === 'results') overlay('Shift over!', 'Check the big screen for your stars.', 'Next shift', () => send({ t: 'start' }));
   else if (scene === 'pause') overlay('Paused', 'The game is paused on the big screen.');
   else overlay(null);
 }
@@ -177,6 +181,7 @@ function button(el, onDown, onUp) {
 }
 button($('grab'), () => { input.g++; }, () => {});
 button($('use'), () => { input.u++; input.hold = true; }, () => { input.hold = false; });
+button($('cheer'), () => { send({ t: 'cheer' }); }, () => {});
 addEventListener('contextmenu', e => e.preventDefault());
 
 // Keep the screen on while playing; rejoin when the phone wakes up.
