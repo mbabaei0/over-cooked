@@ -54,6 +54,7 @@ Shift 1 is gentle: two soups, one gravity failure early. Shift 2 adds a conveyor
 - [x] One cheer key: every cook cheers (team signals)
 - [x] Cheat code: type ZERO on the shift select to unlock every shift (again to lock them)
 - [x] Shift 4, Dark Side Galley: the power fails with gravity, so only helmet lamps, stoves and the hatch light the kitchen
+- [x] New recipes: Moon Shroom and Sun Pepper, three new soups (Crater Stew, Galaxy Broth, Solar Flare), and Space Slop for a pot that fits no recipe; later shifts add more of them
 
 ## Keep
 - love it, the whole game as built *(you said)*

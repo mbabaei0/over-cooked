@@ -74,6 +74,20 @@ describe('pots and soups', () => {
     expect(soupOfContents(['tomato', 'tomato'])).toBe('red');
     expect(soupOfContents(['kelp', 'kelp'])).toBe('green');
     expect(soupOfContents(['tomato', 'kelp'])).toBe('mixed');
+    expect(soupOfContents(['shroom', 'shroom'])).toBe('crater');
+    expect(soupOfContents(['kelp', 'shroom'])).toBe('galaxy');
+    expect(soupOfContents(['tomato', 'pepper'])).toBe('flare');
+  });
+
+  it('turns a mix that fits no recipe into slop', () => {
+    expect(soupOfContents(['pepper', 'kelp'])).toBe('slop');
+    expect(soupOfContents(['pepper', 'pepper'])).toBe('slop');
+    expect(soupOfContents(['tomato', 'shroom'])).toBe('slop');
+  });
+
+  it('names the soup by its kinds whatever the pot size', () => {
+    expect(soupOfContents(['tomato', 'tomato', 'tomato'])).toBe('red');
+    expect(soupOfContents(['shroom', 'kelp', 'kelp'])).toBe('galaxy');
   });
 
   it('is done only when full, cooked and not burnt', () => {

@@ -31,7 +31,7 @@ const CHEAP = params.get('render') === 'cheap';
 const events: Loose[] = []; // window.game.events: anything the game wants a run to see
 
 // ---- The galleys: four maps, projection --------------------------------------------------
-// '#' counter · T tomato crate · K kelp crate · B chopping board · S stove · W bowl rack
+// '#' counter · T tomato crate · K kelp crate · M moon shroom crate · P sun pepper crate · B chopping board · S stove · W bowl rack
 // H serving hatch · X trash airlock · '.' floor
 // > < ^ v conveyor belt (moves items that way) · I cargo bay (drops crates on the belt)
 // V hull vent (opens while gravity is off and pulls floating things out)
@@ -49,7 +49,7 @@ const LEVELS = [
       '##W####B###S###',
     ] },
   { key: 's2', name: 'Cargo Deck', twist: 'Ingredients arrive on a conveyor that never stops, not even in zero-g.',
-    soups: ['red', 'green', 'mixed'], trim: '#2ec4b6', view: 'giant', map: [
+    soups: ['red', 'green', 'mixed', 'crater'], trim: '#2ec4b6', view: 'giant', map: [
       '##B#S#S#W#S##X#',
       'I.............#',
       'v.............H',
@@ -61,26 +61,26 @@ const LEVELS = [
       '>>>>>>>#B##W###',
     ] },
   { key: 's3', name: 'Hull Breach Bay', twist: 'When gravity fails, a hull breach pulls floating things out into space.',
-    soups: ['red', 'green', 'mixed'], trim: '#e0567a', view: 'nebula', breach: true, map: [
+    soups: ['red', 'green', 'mixed', 'crater', 'galaxy'], trim: '#e0567a', view: 'nebula', breach: true, map: [
       '#TT#S#S#S#KK#W#',
       '#.............#',
       'B.............H',
       '#....#BB#.....H',
       'B.............#',
       '#.............X',
-      '#.............#',
-      '#.............#',
+      'M.............#',
+      'M.............#',
       '##W##B#V#B#####',
     ] },
   { key: 's4', name: 'Dark Side Galley', twist: 'When gravity fails, the power fails too. Only your helmet lamp and the stoves give light.',
-    soups: ['red', 'green', 'mixed'], trim: '#ffd23f', view: 'eclipse', dark: true, map: [
+    soups: ['red', 'green', 'mixed', 'crater', 'galaxy', 'flare'], trim: '#ffd23f', view: 'eclipse', dark: true, map: [
       '#TT##B#W#B##KK#',
       '#.............#',
       'H.............#',
       'H....#SSS#....X',
       '#.............#',
-      '#.............#',
-      '#.............#',
+      'M.............P',
+      'M.............P',
       '#.............#',
       '##W###B#B###W##',
     ] },
@@ -99,7 +99,21 @@ const SOUPS: Record<string, { name: string; color: string; rim: string; recipe: 
   red: { name: 'Red Nebula', color: '#e8473b', rim: '#ff8a6b', recipe: ['tomato', 'tomato'] },
   green: { name: 'Comet Kelp', color: '#4fbf5a', rim: '#9be38a', recipe: ['kelp', 'kelp'] },
   mixed: { name: 'Eclipse Mix', color: '#f0902e', rim: '#ffc46b', recipe: ['tomato', 'kelp'] },
+  crater: { name: 'Crater Stew', color: '#9a7fc4', rim: '#cdb8f0', recipe: ['shroom', 'shroom'] },
+  galaxy: { name: 'Galaxy Broth', color: '#4f5fd8', rim: '#9fb0ff', recipe: ['shroom', 'kelp'] },
+  flare: { name: 'Solar Flare', color: '#ffb020', rim: '#fff07a', recipe: ['pepper', 'tomato'] },
+  slop: { name: 'Space Slop', color: '#7a6a4a', rim: '#a8946a', recipe: [] }, // a pot that fits no recipe; no order wants it
 };
+/** The crates: the tile letter, the ingredient it gives, and the crate's colours. */
+const CRATES: Record<string, { kind: string; box: string; label: string }> = {
+  T: { kind: 'tomato', box: '#2e6f8e', label: '#e8473b' },
+  K: { kind: 'kelp', box: '#2e8e6a', label: '#4fbf5a' },
+  M: { kind: 'shroom', box: '#4e4478', label: '#b49ae0' },
+  P: { kind: 'pepper', box: '#8a5a24', label: '#ffb020' },
+};
+const CRATE_OF: Record<string, string> = Object.fromEntries(Object.entries(CRATES).map(([t, c]) => [c.kind, t]));
+/** The ingredients this shift's soups use: what the cargo bay drops on the belt. */
+const levelKinds = (): string[] => [...new Set(level.soups.flatMap(sp => SOUPS[sp].recipe))];
 const COLORS = [
   { suit: '#ff8a3d', dark: '#b8541a' }, { suit: '#2ec4b6', dark: '#16867b' },
   { suit: '#b06cff', dark: '#723cb8' }, { suit: '#ffd23f', dark: '#b38f12' },
@@ -288,7 +302,7 @@ function makeItem(kind: string, x: number, y: number, z = 0): Loose {
   state.items.push(it);
   return it;
 }
-const isIngr = (it: Loose): boolean => it.kind === 'tomato' || it.kind === 'kelp';
+const isIngr = (it: Loose): boolean => CRATE_OF[it.kind] !== undefined;
 const tileAt = (r: number, c: number): Loose => (r >= 0 && r < ROWS && c >= 0 && c < COLS) ? state.tiles[r][c] : null;
 const solid = (t: Loose): boolean => t && t.type !== '.';
 function detach(it: Loose): void {
@@ -455,8 +469,8 @@ function interact(p: Loose, T: Loose): void {
   if (near) { hold(p, near); return; }
   if (!T) return;
   if (T.item) { hold(p, T.item); return; }
-  if (T.type === 'T' || T.type === 'K' || T.type === 'W') {
-    const it = makeItem(T.type === 'T' ? 'tomato' : T.type === 'K' ? 'kelp' : 'bowl', p.x, p.y);
+  if (CRATES[T.type] || T.type === 'W') {
+    const it = makeItem(CRATES[T.type] ? CRATES[T.type].kind : 'bowl', p.x, p.y);
     it.at = 'held'; p.held = it; sfx.pick();
   }
 }
@@ -631,7 +645,7 @@ function botDecide(p: Loose): Loose {
   for (const k of need) {
     const on = (t: Loose, chopped: Loose) => t.item && t.item.kind === k && t.item.chopped === chopped && t.type !== 'B';
     const src = nearestTile(p, t => on(t, true)) || nearestTile(p, t => t.type === 'B' && t.item && t.item.kind === k && t.item.chopped)
-      || nearestTile(p, t => on(t, false)) || nearestTile(p, t => t.type === (k === 'tomato' ? 'T' : 'K'));
+      || nearestTile(p, t => on(t, false)) || nearestTile(p, t => t.type === CRATE_OF[k]);
     if (src) return tileGoal(src, 'grab');
   }
   const loosePot = nearestTile(p, t => t.type === '#' && t.item && t.item.kind === 'pot' && state.tiles.flat().some((s: Loose) => s.type === 'S' && !s.item));
@@ -714,7 +728,7 @@ function updateBelts(dt: number): void {
       state.intakeT = tune.conveyor_interval;
       const t0 = state.intakeOut;
       if (!t0.item) {
-        const it = makeItem(rng() < 0.5 ? 'tomato' : 'kelp', 0, 0);
+        const kinds = levelKinds(), it = makeItem(kinds[Math.floor(rng() * kinds.length)], 0, 0);
         placeOnTile(it, t0); state.intakeFlash = 0.4; sfx.thunk();
         if (!state.g.on) { setAir(it, 0.8 + rng() * 0.6, (rng() * 2 - 1) * 0.6, 0.6); it.floated = true; }
       }
@@ -831,7 +845,7 @@ function updatePlay(dt: number): void {
     const t = it.at === 'counter' ? tileAt(it.tr, it.tc) : null;
     if (t && t.type === 'S' && g.on && it.contents.length >= tune.pot_size && !it.burnt) {
       it.cook += dt;
-      if (!it.doneSaid && it.cook >= tune.cook_time) { it.doneSaid = true; sfx.done(); }
+      if (!it.doneSaid && it.cook >= tune.cook_time) { it.doneSaid = true; sfx.done(); if (soupOf(it) === 'slop') popup(it.x, it.y - 1, 'space slop!', '#c8b48a'); }
       if (it.cook >= tune.cook_time + tune.burn_time) { it.burnt = true; sfx.burn(); popup(it.x, it.y - 1, 'burnt!', '#ff6b6b'); }
     }
   }
@@ -887,6 +901,41 @@ function drawKelp(x: number, y: number, chopped: boolean, s = 1): void {
   }
   ctx.restore();
 }
+function drawShroom(x: number, y: number, chopped: boolean, s = 1): void { // a moon shroom: a pale stalk under a cratered violet cap
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); lineStyle(2);
+  if (!chopped) {
+    ctx.fillStyle = '#e8e2d4'; rrect(-4, -12, 8, 12, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#9a7fc4'; ctx.beginPath(); ctx.ellipse(0, -12, 13, 10, 0, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#6e58a0'; ellipse(-5, -16, 2.5, 2); ctx.fill(); ellipse(4, -18, 2, 1.6); ctx.fill(); ellipse(6, -14, 1.6, 1.3); ctx.fill();
+  } else {
+    for (let i = -1; i <= 1; i++) {
+      ctx.fillStyle = '#9a7fc4'; ctx.beginPath(); ctx.ellipse(i * 8, -4, 6, 5, 0, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#e8e2d4'; ctx.fillRect(i * 8 - 1.5, -4, 3, 3);
+    }
+  }
+  ctx.restore();
+}
+function drawPepper(x: number, y: number, chopped: boolean, s = 1): void { // a sun pepper: a glowing golden pod with a curled stem
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); lineStyle(2);
+  if (!chopped) {
+    ctx.fillStyle = '#ffb020'; ctx.beginPath(); ctx.moveTo(-8, -18); ctx.quadraticCurveTo(-12, -4, 0, 0); ctx.quadraticCurveTo(12, -4, 8, -18); ctx.quadraticCurveTo(0, -22, -8, -18); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff07a'; ellipse(-3, -13, 2.5, 4); ctx.fill();
+    ctx.strokeStyle = '#3aa64a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, -20); ctx.quadraticCurveTo(2, -27, 7, -26); ctx.stroke();
+  } else {
+    for (let i = -1; i <= 1; i++) {
+      ctx.fillStyle = '#ffb020'; ctx.beginPath(); ctx.arc(i * 8, -5, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fff07a'; ellipse(i * 8, -5, 2, 2); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+/** Draws any ingredient by its kind. */
+function drawIngr(kind: string, x: number, y: number, chopped: boolean, s = 1): void {
+  if (kind === 'tomato') drawTomato(x, y, chopped, s);
+  else if (kind === 'kelp') drawKelp(x, y, chopped, s);
+  else if (kind === 'shroom') drawShroom(x, y, chopped, s);
+  else if (kind === 'pepper') drawPepper(x, y, chopped, s);
+}
 function drawBowl(x: number, y: number, soup: SoupType | null, s = 1): void {
   ctx.save(); ctx.translate(x, y); ctx.scale(s, s); lineStyle(2);
   ctx.fillStyle = '#e8eef5'; ctx.beginPath(); ctx.ellipse(0, -9, 14, 5, 0, 0, Math.PI * 2); ctx.fill();
@@ -917,8 +966,7 @@ function drawPot(x: number, y: number, pot: Loose, s = 1): void {
 }
 function drawItem(it: Loose, x: number, y: number, s = 1): void {
   if (it.spin && it.at === 'air') { ctx.save(); ctx.translate(x, y - 10 * s); ctx.rotate(it.spin); ctx.translate(-x, -(y - 10 * s)); }
-  if (it.kind === 'tomato') drawTomato(x, y, it.chopped, s);
-  else if (it.kind === 'kelp') drawKelp(x, y, it.chopped, s);
+  if (isIngr(it)) drawIngr(it.kind, x, y, it.chopped, s);
   else if (it.kind === 'bowl') drawBowl(x, y, it.soup, s);
   else if (it.kind === 'pot') drawPot(x, y, it, s);
   if (it.spin && it.at === 'air') ctx.restore();
@@ -932,7 +980,7 @@ function drawItemUI(it: Loose, x: number, y: number): void { // bars and content
         const cx = x + (i - (n - 1) / 2) * 20, cy = y - 46;
         ctx.fillStyle = 'rgba(16,20,31,0.75)'; ellipse(cx, cy - 8, 10, 10); ctx.fill();
         const k = it.contents[i];
-        if (k === 'tomato') drawTomato(cx, cy + 2, true, 0.55); else if (k === 'kelp') drawKelp(cx, cy + 2, true, 0.55);
+        if (k) drawIngr(k, cx, cy + 2, true, 0.55);
         else { ctx.strokeStyle = '#6b7690'; ctx.lineWidth = 1.5; ellipse(cx, cy - 8, 6, 6); ctx.stroke(); }
       }
     }
@@ -1153,12 +1201,13 @@ function drawCounter(t: Loose, targets: Map<Loose, Loose>): void {
   ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x + TS - 1, yt, 1, TD + CH * TZ);
   const cx = x + TS / 2, cy = yt + TD / 2;
   lineStyle(2);
-  if (type === 'T' || type === 'K') {
-    ctx.fillStyle = type === 'T' ? '#2e6f8e' : '#2e8e6a'; rrect(x + 6, yt + 2, TS - 12, TD - 4, 6); ctx.fill(); ctx.stroke();
+  if (CRATES[type]) {
+    const cr = CRATES[type], k = cr.kind, kelp = k === 'kelp';
+    ctx.fillStyle = cr.box; rrect(x + 6, yt + 2, TS - 12, TD - 4, 6); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#1b2a3a'; rrect(x + 11, yt + 6, TS - 22, TD - 14, 4); ctx.fill();
-    if (type === 'T') { drawTomato(cx - 8, cy + 6, false, 0.6); drawTomato(cx + 8, cy + 8, false, 0.6); drawTomato(cx, cy + 2, false, 0.65); }
-    else { drawKelp(cx - 8, cy + 8, false, 0.6); drawKelp(cx + 8, cy + 8, false, 0.6); drawKelp(cx, cy + 4, false, 0.65); }
-    ctx.fillStyle = type === 'T' ? '#e8473b' : '#4fbf5a'; ctx.fillRect(x + 8, yf + 12, TS - 16, 10);
+    if (kelp) { drawKelp(cx - 8, cy + 8, false, 0.6); drawKelp(cx + 8, cy + 8, false, 0.6); drawKelp(cx, cy + 4, false, 0.65); }
+    else { drawIngr(k, cx - 8, cy + 6, false, 0.6); drawIngr(k, cx + 8, cy + 8, false, 0.6); drawIngr(k, cx, cy + 2, false, 0.65); }
+    ctx.fillStyle = cr.label; ctx.fillRect(x + 8, yf + 12, TS - 16, 10);
   } else if (type === 'B') {
     ctx.fillStyle = '#d9a066'; rrect(x + 7, yt + 5, TS - 14, TD - 10, 5); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#b97f48'; ctx.fillRect(x + 10, yt + TD - 11, TS - 20, 3);
@@ -1315,7 +1364,7 @@ function drawHUD(): void {
     ctx.fillStyle = urgent ? '#5a2430' : '#1d2436'; rrect(x, y, w, h, 10); ctx.fill(); lineStyle(3); ctx.stroke();
     drawBowl(x + 28, y + 44, o.type, 1.05);
     text(sp.name, x + 88, y + 18, 13, '#e8eef5');
-    sp.recipe.forEach((r, j) => { const cx = x + 70 + j * 32, cy = y + 52; ctx.fillStyle = '#2a3348'; ellipse(cx, cy - 4, 14, 14); ctx.fill(); r === 'tomato' ? drawTomato(cx, cy + 6, false, 0.85) : drawKelp(cx, cy + 8, false, 0.8); });
+    sp.recipe.forEach((r, j) => { const cx = x + 70 + j * 32, cy = y + 52; ctx.fillStyle = '#2a3348'; ellipse(cx, cy - 4, 14, 14); ctx.fill(); drawIngr(r, cx, cy + (r === 'kelp' ? 8 : 6), false, r === 'tomato' ? 0.85 : 0.8); });
     ctx.fillStyle = '#10141f'; rrect(x + 8, y + h - 10, w - 16, 6, 3); ctx.fill();
     ctx.fillStyle = k > 0.5 ? '#5be37a' : k > 0.25 ? '#ffd23f' : '#ff5a3d'; rrect(x + 8, y + h - 10, (w - 16) * k, 6, 3); ctx.fill();
   });
@@ -1367,7 +1416,7 @@ function drawMiniMap(lv: Loose, x: number, y: number, cw: number, chh: number): 
   for (let r = 0; r < m.length; r++) for (let c = 0; c < m[0].length; c++) {
     const k = m[r][c], px = x + c * cw, py = y + r * chh;
     ctx.fillStyle = k === '.' ? ((r + c) % 2 ? '#2f394c' : '#344056') : DIRS[k] ? '#1b2130' : k === 'I' ? '#2ec4b6' : k === 'V' ? '#ff3d5a'
-      : k === 'T' ? '#e8473b' : k === 'K' ? '#4fbf5a' : k === 'S' ? '#262c38' : k === 'H' ? '#5be37a' : k === 'B' ? '#d9a066' : k === 'W' ? '#e8eef5' : k === 'X' ? '#ffd23f' : '#c3ccd8';
+      : CRATES[k] ? CRATES[k].label : k === 'S' ? '#262c38' : k === 'H' ? '#5be37a' : k === 'B' ? '#d9a066' : k === 'W' ? '#e8eef5' : k === 'X' ? '#ffd23f' : '#c3ccd8';
     ctx.fillRect(px, py, cw - 1, chh - 1);
     if (DIRS[k]) { ctx.fillStyle = '#7d889c'; const [dx, dy] = DIRS[k]; ctx.fillRect(px + cw / 2 - 1.5 + dx * 3, py + chh / 2 - 1.5 + dy * 2, 3, 3); }
   }
@@ -1393,19 +1442,23 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       const pot = { kind: 'pot', contents: ['tomato', 'kelp'], cook: 3, burnt: false };
       const items: [string, () => void][] = [['tomato', () => drawTomato(0, 0, false, 1.5)], ['tomato chopped', () => drawTomato(0, 0, true, 1.5)],
         ['kelp', () => drawKelp(0, 0, false, 1.5)], ['kelp chopped', () => drawKelp(0, 0, true, 1.5)],
+        ['moon shroom', () => drawShroom(0, 0, false, 1.5)], ['shroom chopped', () => drawShroom(0, 0, true, 1.5)],
+        ['sun pepper', () => drawPepper(0, 0, false, 1.5)], ['pepper chopped', () => drawPepper(0, 0, true, 1.5)],
         ['bowl', () => drawBowl(0, 0, null, 1.5)], ['Red Nebula', () => drawBowl(0, 0, 'red', 1.5)],
         ['Comet Kelp', () => drawBowl(0, 0, 'green', 1.5)], ['Eclipse Mix', () => drawBowl(0, 0, 'mixed', 1.5)],
+        ['Crater Stew', () => drawBowl(0, 0, 'crater', 1.5)], ['Galaxy Broth', () => drawBowl(0, 0, 'galaxy', 1.5)],
+        ['Solar Flare', () => drawBowl(0, 0, 'flare', 1.5)], ['Space Slop', () => drawBowl(0, 0, 'slop', 1.5)],
         ['pot', () => drawPot(0, 0, pot, 1.4)], ['burnt pot', () => drawPot(0, 0, { contents: ['tomato', 'tomato'], burnt: true, cook: 0 }, 1.4)]];
       items.forEach(([name, f], i) => {
-        const x = 110 + (i % 5) * 240, y = 370 + Math.floor(i / 5) * 120;
+        const x = 100 + (i % 6) * 216, y = 318 + Math.floor(i / 6) * 100;
         ctx.save(); ctx.translate(x, y); f(); ctx.restore(); text(name, x, y + 26, 14, '#c3ccd8');
       });
       // the stations that are new in shifts 2 and 3, drawn on their own counters
       const saved = { MAP, X0 }, stations = [['conveyor belt', '>'], ['cargo bay', 'I'], ['hull vent (sealed)', 'V']];
       stations.forEach(([name, k], i) => {
-        const t = { r: 0, c: 0, type: k, item: null }, x = 380 + i * 240, y = 620;
+        const t = { r: 0, c: 0, type: k, item: null }, x = 380 + i * 240, y = 648;
         ctx.save(); ctx.translate(x - TS / 2 - sx(0), y - 40 - sy(0, CH)); drawCounter(t, new Map()); ctx.restore();
-        text(name, x, y + 50, 14, '#c3ccd8');
+        text(name, x, y + 46, 14, '#c3ccd8');
       });
       void saved;
     },

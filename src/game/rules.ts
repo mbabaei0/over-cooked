@@ -1,10 +1,19 @@
 // The kitchen's rules with no browser in them, so Vitest runs them in Node.
 // The game calls these; the values come from data/config.json through the caller.
 
-/** The three soups' keys. */
-export type SoupType = 'red' | 'green' | 'mixed';
+/** The soups' keys; 'slop' is what a pot that fits no recipe becomes, and no order wants it. */
+export type SoupType = 'red' | 'green' | 'mixed' | 'crater' | 'galaxy' | 'flare' | 'slop';
 /** Ingredient kinds a pot holds. */
-export type Ingredient = 'tomato' | 'kelp';
+export type Ingredient = 'tomato' | 'kelp' | 'shroom' | 'pepper';
+
+/**
+ * Each soup by the kinds in it: a pot holding exactly these kinds (in any amounts) makes that
+ * soup, so the rule holds for any pot size. Any other mix is slop.
+ */
+export const SOUP_KINDS: Record<Exclude<SoupType, 'slop'>, readonly Ingredient[]> = {
+  red: ['tomato'], green: ['kelp'], mixed: ['kelp', 'tomato'],
+  crater: ['shroom'], galaxy: ['kelp', 'shroom'], flare: ['pepper', 'tomato'],
+};
 
 /** The seeded random source: mulberry32. Every gameplay random call reads this, never Math.random. */
 let seed = 0;
@@ -18,10 +27,11 @@ export function rng(): number {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-/** The soup a pot's contents make: all tomato is red, no tomato is green, else mixed. */
+/** The soup a pot's contents make: the soup whose kinds are exactly the kinds in the pot, else slop. */
 export function soupOfContents(contents: readonly string[]): SoupType {
-  const tom = contents.filter(k => k === 'tomato').length;
-  return tom === contents.length ? 'red' : tom === 0 ? 'green' : 'mixed';
+  const kinds = [...new Set(contents)].sort().join(',');
+  for (const [soup, k] of Object.entries(SOUP_KINDS)) if (k.join(',') === kinds) return soup as SoupType;
+  return 'slop';
 }
 
 /** True when a pot is full, cooked and not burnt. */
