@@ -52,6 +52,7 @@ Shift 1 is gentle: two soups, one gravity failure early. Shift 2 adds a conveyor
 - [x] 1–4 players on keyboard, gamepads, or phones by QR
 - [x] Shift-select screen with stars, and an end screen showing each cook's part (shared credit)
 - [x] One cheer key: every cook cheers (team signals)
+- [x] Cheat code: type ZERO on the shift select to unlock every shift (again to lock them)
 
 ## Keep
 - love it, the whole game as built *(you said)*

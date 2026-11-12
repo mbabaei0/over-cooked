@@ -98,10 +98,26 @@ const KEYSETS = [
 const SPAWNS = [[3.5, 6.5], [11.5, 6.5], [3.5, 2.5], [11.5, 2.5]];
 
 // Progress: stars per shift, kept in this browser only. 1 star unlocks the next shift.
-let progress = { stars: [0, 0, 0], best: [0, 0, 0] };
+let progress: { stars: number[]; best: number[]; cheat?: boolean } = { stars: [0, 0, 0], best: [0, 0, 0] };
 try { const j = JSON.parse(localStorage.getItem('ssg-progress') || 'null'); if (j && Array.isArray(j.stars)) progress = j; } catch (e) {}
 function saveProgress(): void { try { localStorage.setItem('ssg-progress', JSON.stringify(progress)); } catch (e) {} }
-const unlocked = (i: number): boolean => params.get('unlock') === 'all' || i === 0 || progress.stars[i - 1] > 0;
+const unlocked = (i: number): boolean => params.get('unlock') === 'all' || !!progress.cheat || i === 0 || progress.stars[i - 1] > 0;
+
+// Cheat code: type Z E R O on the shift-select screen and every shift opens; type it again to
+// lock them back. Kept with the progress, so it lasts until typed again. No key in it moves
+// the selection or joins a cook there.
+const CHEAT = ['KeyZ', 'KeyE', 'KeyR', 'KeyO'];
+const CHEAT_BANNER = 2; // seconds the "unlocked" banner shows
+let cheatAt = 0, cheatBanner = 0;
+/** Reads this step's presses against the cheat code; true on the step it is completed. */
+function cheatTyped(): boolean {
+  for (const code of hit) { // in the order pressed, so fast typing within one step still counts
+    if (code === CHEAT[cheatAt]) cheatAt++;
+    else cheatAt = code === CHEAT[0] ? 1 : 0;
+    if (cheatAt === CHEAT.length) { cheatAt = 0; return true; }
+  }
+  return false;
+}
 const R = 0.32; // cook radius in tiles
 
 // Stars on the window: fixed by a hash, not gameplay chance.
@@ -1382,13 +1398,19 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       if (right && LV < 2) { LV++; sfx.select(); }
       if (anyStart()) { if (unlocked(LV)) startShift(LV); else sfx.buzz(); return; }
       if (pressed('Escape')) scene = 'title';
+      if (cheatTyped()) {
+        progress.cheat = !progress.cheat; saveProgress(); cheatBanner = CHEAT_BANNER;
+        if (progress.cheat) sfx.unlock(); else sfx.buzz();
+        events.push({ type: 'cheat', on: progress.cheat });
+      }
+      cheatBanner = Math.max(0, cheatBanner - STEP);
       state.t += STEP;
     },
     draw() {
       clear('#0b0f1a');
       for (const s of STARS) { ctx.fillStyle = `rgba(220,230,255,${0.3 + s.sp * 0.6})`; ctx.fillRect(((s.x * W - state.t * 6 * s.sp) % W + W) % W, s.y * H, s.s * 1.2, s.s * 1.2); }
       textOutlined('Choose a galley', W / 2, 70, 48, '#ffb36b');
-      text('Earn 1 star in a shift to open the next one', W / 2, 112, 18, '#9fd0ff', 'center', 'normal');
+      text(progress.cheat ? 'Cheat on: every shift is open (type ZERO again to lock them)' : 'Earn 1 star in a shift to open the next one', W / 2, 112, 18, progress.cheat ? '#ffe066' : '#9fd0ff', 'center', 'normal');
       LEVELS.forEach((lv, i) => {
         const cx = W / 2 + (i - 1) * 400, x = cx - 180, y = 150, w = 360, h = 430, sel = i === LV, open = unlocked(i);
         ctx.fillStyle = sel ? '#1d2436' : '#141a28'; rrect(x, y, w, h, 18); ctx.fill();
@@ -1412,6 +1434,12 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       const who = roster.length <= 1 && tune.bot_partner >= 1 ? 'You and BOLT the robot' : `${roster.length} cooks`;
       text(`${who}  ·  A / D or arrows to pick  ·  Esc: back`, W / 2, 616, 17, '#9aa7b8', 'center', 'normal');
       textOutlined(unlocked(LV) ? `Enter to start ${LEVELS[LV].name}` : 'Locked: earn a star in the shift before it', W / 2, 664, 28, unlocked(LV) ? '#ffffff' : '#ff8a9a');
+      if (cheatBanner > 0) {
+        ctx.globalAlpha = Math.min(1, cheatBanner * 2);
+        ctx.fillStyle = 'rgba(8,10,18,0.85)'; rrect(W / 2 - 300, 320, 600, 90, 18); ctx.fill(); lineStyle(4); ctx.strokeStyle = '#ffe066'; ctx.stroke();
+        textOutlined(progress.cheat ? 'ALL SHIFTS UNLOCKED!' : 'SHIFTS LOCKED AGAIN', W / 2, 365, 40, progress.cheat ? '#ffe066' : '#ff8a9a');
+        ctx.globalAlpha = 1;
+      }
     },
   },
   play: {
