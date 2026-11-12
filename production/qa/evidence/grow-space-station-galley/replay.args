@@ -1,0 +1,2 @@
+stop	3600
+log	Enter wait:0.5 Enter wait:1 KeyD:1.2 KeyF KeyW:0.8 KeyG:2 KeyA:1 KeyF wait:2 KeyS:1 KeyF KeyD:1.5 KeyG:2 wait:3 KeyW:1 KeyF KeyA:2 KeyF wait:5 KeyD:1 KeyF KeyS:1 KeyG:2 wait:10 KeyA:1 KeyF KeyW:1 KeyF wait:20 KeyD:1 KeyF
