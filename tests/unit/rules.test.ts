@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import config from '../../data/config.json';
 import {
-  deliveryPoints, fitsRecipe, isPotDone, nextOrderAt, rng, scoreAfterMiss, setSeed, soupOfContents, starsFor,
+  deliveryPoints, fitsRecipe, isPotDone, islandTarget, nextOrderAt, rng, scoreAfterMiss, setSeed, soupOfContents, starsFor,
 } from '../../src/game/rules';
 
 const v = (k: keyof typeof config): number => (config[k] as { value: number }).value;
@@ -101,5 +101,19 @@ describe('pots and soups', () => {
   it('knows what a half-filled pot can still become', () => {
     expect(fitsRecipe(['tomato', 'kelp'], ['kelp'])).toBe(true);
     expect(fitsRecipe(['tomato', 'tomato'], ['kelp'])).toBe(false);
+  });
+});
+
+describe('the drifting island (shift 6)', () => {
+  const home = 4, reach = v('island_reach');
+
+  it('leaves its home toward the side it is sent', () => {
+    expect(islandTarget(home, home, reach, -1)).toBe(home - reach);
+    expect(islandTarget(home, home, reach, 1)).toBe(home + reach);
+  });
+
+  it('crosses to the far side from either side', () => {
+    expect(islandTarget(home - reach, home, reach, -1)).toBe(home + reach);
+    expect(islandTarget(home + reach, home, reach, 1)).toBe(home - reach);
   });
 });

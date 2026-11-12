@@ -69,3 +69,12 @@ export function nextOrderAt(t: number, shiftLength: number, gapStart: number, ga
 export function starsFor(score: number, star1: number, star2: number, star3: number): number {
   return score >= star3 ? 3 : score >= star2 ? 2 : score >= star1 ? 1 : 0;
 }
+
+/**
+ * Where the drifting island (shift 6) slides when gravity fails: from its home column it goes
+ * `reach` columns toward firstDir (-1 or +1); from either side it goes across to the other side.
+ */
+export function islandTarget(col: number, home: number, reach: number, firstDir: number): number {
+  if (col === home) return home + Math.sign(firstDir || 1) * reach;
+  return col < home ? home + reach : home - reach;
+}

@@ -33,6 +33,15 @@ holds no comments. The values themselves are in `data/config.json`.
 - `dark_lamp`: tiles, the reach of each cook's helmet lamp
 - `dark_glow`: tiles, the glow around each stove and the serving hatch
 
+---- Shift 5's twist: two ships and a portal ----
+- `s5_*`: shift 5's gravity schedule, order pace and stars, read like the `s1_` values
+- (no values of its own: the portal pads and the gap are in the map)
+
+---- Shift 6's twist: the drifting island ----
+- `s6_*`: shift 6's gravity schedule, order pace and stars, read like the `s1_` values
+- `island_speed`: tiles/s the island slides while drifting
+- `island_reach`: tiles from its home it drifts to each side (3 closes the side passage)
+
 ---- Cooks ----
 - `cook_speed`: tiles/s walking
 - `cook_accel`: tiles/s^2 walking start/stop

@@ -57,6 +57,8 @@ Shift 1 is gentle: two soups, one gravity failure early. Shift 2 adds a conveyor
 - [x] New recipes: Moon Shroom and Sun Pepper, three new soups (Crater Stew, Galaxy Broth, Solar Flare), and Space Slop for a pot that fits no recipe; later shifts add more of them
 - [x] Longer shifts: 5 minutes instead of 3, with star scores raised by a third so stars stay a little easier
 - [x] Corner fix: anything that lands on a corner counter no cook can reach slides off onto the floor
+- [x] Shift 5, Twin Ships: cooking and serving are on two ships joined only by a portal pad (cooks and thrown items go through); anything adrift in the gap between them is lost
+- [x] Shift 6, Drift Island: when gravity fails, the centre island drifts across the galley and blocks one side until the next failure sends it to the other
 
 ## Keep
 - love it, the whole game as built *(you said)*

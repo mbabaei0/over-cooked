@@ -1,7 +1,9 @@
-// Space Station Galley: four shifts in four galleys, 1-4 cooks (BOLT the robot helps a solo cook).
+// Space Station Galley: six shifts in six galleys, 1-4 cooks (BOLT the robot helps a solo cook).
 // Gravity cuts out every so often and everything not held floats away. Shift 2 adds a cargo
 // conveyor that never stops; shift 3 a hull breach that pulls floating things out into space;
-// shift 4 a blackout: the power fails with gravity, and only helmet lamps light the kitchen.
+// shift 4 a blackout: the power fails with gravity, and only helmet lamps light the kitchen;
+// shift 5 two ships, cooking and serving, joined only by a portal; shift 6 a centre island that
+// drifts across the galley when gravity fails and blocks one side.
 // Chunky toy-like 2.5D: a tilted camera over a box world.
 //
 // The design record is design/game-brief.md. This file holds the scenes, the world, BOLT and
@@ -13,7 +15,7 @@ import { params, manual, clock, seedFrom, install } from './hook';
 import { W, H, FONT, ctx, baseTransform, clear, text, textOutlined, lineStyle, rrect, ellipse } from './screen';
 import { down, hit, pressed, padsNow, padPrev, readPads, padBtn, padEdge, savePads } from './input';
 import { muted, setMuted, tone, sweep, sfx } from './audio';
-import { rng, setSeed, soupOfContents, isPotDone, fitsRecipe, deliveryPoints, scoreAfterMiss, nextOrderAt, starsFor, type SoupType } from './game/rules';
+import { rng, setSeed, soupOfContents, isPotDone, fitsRecipe, deliveryPoints, scoreAfterMiss, nextOrderAt, starsFor, islandTarget, type SoupType } from './game/rules';
 import type { Loose, Input, Cell } from './game/types';
 
 type QRCode = ReturnType<typeof qrcode>;
@@ -35,7 +37,10 @@ const events: Loose[] = []; // window.game.events: anything the game wants a run
 // H serving hatch · X trash airlock · '.' floor
 // > < ^ v conveyor belt (moves items that way) · I cargo bay (drops crates on the belt)
 // V hull vent (opens while gravity is off and pulls floating things out)
-const LEVELS = [
+// O portal pad (a floor tile; step or throw onto one and come out by its pair) · ' ' open space between ships
+// `island`: the counters at row r from column c, w wide, that drift sideways when gravity fails
+const LEVELS: { key: string; name: string; twist: string; soups: string[]; trim: string; view: string; map: string[];
+  breach?: boolean; dark?: boolean; portal?: boolean; island?: { r: number; c: number; w: number } }[] = [
   { key: 's1', name: 'Orbit Galley', twist: 'The station kitchen. Gravity fails now and then.',
     soups: ['red', 'green'], trim: '#ff8a3d', view: 'ring', map: [
       '#TT#KK##S#S##W#',
@@ -84,7 +89,32 @@ const LEVELS = [
       '#.............#',
       '##W###B#B###W##',
     ] },
+  { key: 's5', name: 'Twin Ships', twist: 'Cooking and serving are on two ships. A portal is the only way across; anything that drifts into the gap is lost.',
+    soups: ['red', 'green', 'mixed', 'crater', 'flare'], trim: '#b06cff', view: 'twin', portal: true, map: [
+      '#TSSKK# ##W#W##',
+      '#.....# #.....#',
+      'B.....# #.....H',
+      'T.....# #.....H',
+      'B....O# #O....#',
+      '#.....# #.....#',
+      'M.....# X.....#',
+      'P.....# #.....#',
+      '##S#BX# ###W###',
+    ] },
+  { key: 's6', name: 'Drift Island', twist: 'When gravity fails, the centre island drifts across the galley and blocks one side. Go around!',
+    soups: ['red', 'green', 'mixed', 'crater', 'galaxy', 'flare'], trim: '#5be37a', view: 'drift', island: { r: 4, c: 4, w: 7 }, map: [
+      '#TT#KK#S#MM#PP#',
+      '#.............#',
+      'B.............X',
+      '#.............#',
+      '#...#BS#SB#...#',
+      '#.............#',
+      'H.............#',
+      'H.............B',
+      '##W####W###S###',
+    ] },
 ];
+const NUMBER = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
 const LAST = LEVELS.length - 1;
 const DIRS: Record<string, number[]> = { '>': [1, 0], '<': [-1, 0], '^': [0, -1], 'v': [0, 1] };
 const isBelt = (t: Loose): boolean => !!t && DIRS[t.type] !== undefined;
@@ -304,7 +334,33 @@ function makeItem(kind: string, x: number, y: number, z = 0): Loose {
 }
 const isIngr = (it: Loose): boolean => CRATE_OF[it.kind] !== undefined;
 const tileAt = (r: number, c: number): Loose => (r >= 0 && r < ROWS && c >= 0 && c < COLS) ? state.tiles[r][c] : null;
-const solid = (t: Loose): boolean => t && t.type !== '.';
+const solid = (t: Loose): boolean => t && t.type !== '.' && t.type !== 'O';
+const isVoid = (t: Loose): boolean => !!t && t.type === ' ';
+const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+// ---- Shift 5's portal: two pads, each leading to the other ----------------------------------
+/** The pad paired with a portal pad, or null. */
+function portalPair(t: Loose): Loose {
+  const i = state.portals.indexOf(t);
+  return i < 0 ? null : state.portals[i ^ 1] || null;
+}
+/** The tile you come out on after entering portal t moving along (dx, dy): beside its pair, on the far side. */
+function portalExit(t: Loose, dx: number, dy: number): Loose {
+  const q = portalPair(t); if (!q) return null;
+  const ax = Math.abs(dx) >= Math.abs(dy), ox = ax ? Math.sign(dx) || 1 : 0, oy = ax ? 0 : Math.sign(dy) || 1;
+  const ok = (n: Loose) => n && !solid(n) && n.type !== 'O';
+  const e = tileAt(q.r + oy, q.c + ox);
+  return ok(e) ? e : N4.map(([dr, dc]) => tileAt(q.r + dr, q.c + dc)).find(ok) || null;
+}
+/** Sends a cook or an item standing on a portal pad out by its pair; true if it went through. */
+function warp(o: Loose, dx: number, dy: number): boolean {
+  const t = tileAt(Math.floor(o.y), Math.floor(o.x));
+  if (!t || t.type !== 'O') return false;
+  const e = portalExit(t, dx, dy); if (!e) return false;
+  o.x = e.c + 0.5; o.y = e.r + 0.5; state.warpFlash = 0.35;
+  sweep(300, 1200, 0.18, 'sine', 0.18);
+  return true;
+}
 function detach(it: Loose): void {
   if (it.tr >= 0) { const t = tileAt(it.tr, it.tc); if (t && t.item === it) t.item = null; }
   it.tr = it.tc = -1;
@@ -354,7 +410,7 @@ function toFloorNear(it: Loose): void { // an item that cannot rest on a counter
     const px = Math.min(Math.max(it.x, t.c + 0.15), t.c + 0.85), py = Math.min(Math.max(it.y, t.r + 0.15), t.r + 0.85);
     const d = Math.hypot(px - it.x, py - it.y); if (d < bd) { bd = d; best = [px, py]; }
   }
-  if (!best) best = [7.5, 6.5];
+  if (!best) best = SPAWNS[0];
   detach(it); it.x = best[0]; it.y = best[1]; it.vx = it.vy = 0; it.at = 'air'; if (it.vz > 0) it.vz = 0;
 }
 
@@ -392,14 +448,21 @@ function reset(): void {
     g: { on: true, warn: false, next: LT('first_zero_g'), end: 0, beep: 0, failures: 0 },
     shake: 0, flash: 0, stars: 0, ended: false, unlockedNow: false, newBest: false,
     intakeT: 1, intakeFlash: 0, intakeOut: null, vent: null, respawns: [], dark: 0,
+    portals: [], warpFlash: 0, island: null,
   };
   for (let r = 0; r < ROWS; r++) {
     const row = [];
-    for (let c = 0; c < COLS; c++) row.push({ r, c, type: MAP[r][c], item: null, stand: false });
+    for (let c = 0; c < COLS; c++) row.push({ r, c, type: MAP[r][c], item: null, stand: false, island: false });
     state.tiles.push(row);
   }
+  if (level.island) {
+    const { r, c, w } = level.island;
+    state.island = { r, col: c, home: c, w, target: c, off: 0, dir: 0 };
+    for (let k = 0; k < w; k++) state.tiles[r][c + k].island = true;
+  }
+  markStands();
   for (const t of state.tiles.flat()) {
-    if (solid(t)) t.stand = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dr, dc]) => { const n = tileAt(t.r + dr, t.c + dc); return n && !solid(n); });
+    if (t.type === 'O') state.portals.push(t);
     if (t.type === 'I') state.intakeOut = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dr, dc]) => tileAt(t.r + dr, t.c + dc)).find(isBelt) || null;
     if (t.type === 'V') state.vent = { x: t.c + 0.5, y: t.r + 0.5, t };
   }
@@ -407,6 +470,10 @@ function reset(): void {
   state.players = roster.map(makePlayer);
   if (roster.length === 1 && tune.bot_partner >= 1) state.players.push(makePlayer({ i: 4, ctl: { kind: 'bot' }, name: 'BOLT', bot: true }));
   addOrder('red');
+}
+/** Marks each counter a cook can stand beside (re-run when the island moves). */
+function markStands(): void {
+  for (const t of state.tiles.flat()) t.stand = solid(t) && N4.some(([dr, dc]) => { const n = tileAt(t.r + dr, t.c + dc); return n && !solid(n); });
 }
 function startShift(i: number): void { LV = i; reset(); scene = 'play'; events.push({ type: 'shift', shift: i + 1 }); }
 
@@ -486,6 +553,8 @@ function startZeroG(): void {
     }
   }
   for (const p of state.players) { p.vx += (rng() * 2 - 1) * 0.8; p.vy += (rng() * 2 - 1) * 0.8; }
+  const I = state.island; // the island's clamps let go: it drifts to block a side
+  if (I) I.target = islandTarget(I.col, I.home, tune.island_reach, rng() < 0.5 ? -1 : 1);
   sfx.gravOff(); events.push({ type: 'zero-g', t: state.t }); broadcast({ t: 'grav', on: false });
 }
 function endZeroG(): void {
@@ -555,6 +624,54 @@ function updatePlayer(p: Loose, dt: number): void {
   p.x += p.vx * dt; p.y += p.vy * dt;
   p.walk += Math.hypot(p.vx, p.vy) * dt;
   collideTiles(p, R, zeroG ? tune.wall_bounce : 0);
+  const moving = Math.abs(p.vx) + Math.abs(p.vy) > 0.1;
+  if (warp(p, moving ? p.vx : p.fx, moving ? p.vy : p.fy)) events.push({ type: 'portal', who: p.r.name });
+}
+
+// ---- Shift 6's drifting island -------------------------------------------------------------
+/** Moves the island's counters (and anything on them) one column along dir in the tile grid. */
+function shiftIsland(I: Loose, dir: number): void {
+  const row = state.tiles[I.r], cells = [];
+  for (let k = 0; k < I.w; k++) cells.push(row[I.col + k]);
+  const data = cells.map((t: Loose) => ({ type: t.type, item: t.item }));
+  for (const t of cells) { t.type = '.'; t.item = null; t.island = false; }
+  I.col += dir;
+  data.forEach((d: Loose, k: number) => {
+    const t = row[I.col + k]; t.type = d.type; t.island = true; t.item = null;
+    if (d.item) { const it = d.item; it.tr = -1; placeOnTile(it, t); }
+  });
+  markStands();
+  for (const it of state.items) { // anything lying where the island now is gets shoved aside
+    if (it.at === 'floor' && solid(tileAt(Math.floor(it.y), Math.floor(it.x)))) { toFloorNear(it); it.at = 'floor'; it.z = 0; }
+  }
+}
+/** Slides the island toward its target; cooks in its way are pushed ahead or squeezed out to one side. */
+function updateIsland(dt: number): void {
+  const I = state.island;
+  if (!I) return;
+  if (I.col === I.target) { I.dir = 0; I.off = 0; return; }
+  const dir = Math.sign(I.target - I.col), d = tune.island_speed * dt;
+  I.dir = dir;
+  const left = I.col + dir * I.off, edge = dir > 0 ? left + I.w : left, ne = edge + dir * d;
+  for (const p of state.players) {
+    if (p.y + R <= I.r || p.y - R >= I.r + 1) continue; // not in the island's row
+    const ahead = (p.x - edge) * dir;
+    if (ahead < -0.3 || ahead - R >= d) continue; // behind it, or not reached this step
+    const nx = ne + dir * R;
+    if (!solid(tileAt(Math.floor(p.y), Math.floor(nx + dir * R)))) { p.x = nx; if (p.vx * dir < tune.island_speed) p.vx = dir * tune.island_speed; continue; }
+    const ny = p.y < I.r + 0.5 ? I.r - R - 0.01 : I.r + 1 + R + 0.01; // pinned against a wall: squeezed out of the row
+    if (!solid(tileAt(Math.floor(ny), Math.floor(p.x)))) { p.y = ny; p.vy = 0; continue; }
+    return; // truly stuck: the island waits
+  }
+  I.off += d;
+  while (I.off >= 1) {
+    I.off -= 1; shiftIsland(I, dir);
+    if (I.col === I.target) {
+      I.off = 0; I.dir = 0; state.shake = Math.max(state.shake, 0.3); sfx.thunk();
+      events.push({ type: 'island', col: I.col }); break;
+    }
+  }
+  for (const it of state.items) if (it.at === 'counter' && tileAt(it.tr, it.tc).island) it.x = it.tc + 0.5 + I.dir * I.off;
 }
 
 // ---- BOLT, the bot partner ---------------------------------------------------------------
@@ -657,10 +774,13 @@ function bfs(p: Loose, isGoal: (r: number, c: number) => boolean): Cell[] | null
   const s0 = tileAt(sr, sc); if (!s0 || solid(s0)) return null;
   const key = (r: number, c: number): number => r * COLS + c, prev = new Map<number, Cell | null>([[key(sr, sc), null]]), q: Cell[] = [[sr, sc]];
   while (q.length) {
-    const cur = q.shift()!;
-    if (isGoal(cur[0], cur[1])) { const path: Cell[] = []; let n: Cell | null | undefined = cur; while (n) { path.unshift(n); n = prev.get(key(n[0], n[1])); } return path; }
-    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nr = cur[0] + dr, nc = cur[1] + dc, t = tileAt(nr, nc);
+    const cur = q.shift()!, ct = tileAt(cur[0], cur[1]);
+    if (ct.type !== 'O' && isGoal(cur[0], cur[1])) { const path: Cell[] = []; let n: Cell | null | undefined = cur; while (n) { path.unshift(n); n = prev.get(key(n[0], n[1])); } return path; }
+    const pair = ct.type === 'O' ? portalPair(ct) : null; // stepping on a pad lands you beside its pair
+    if (ct.type === 'O' && !pair) continue;
+    for (const [dr, dc] of N4) {
+      const nr = (pair ? pair.r : cur[0]) + dr, nc = (pair ? pair.c : cur[1]) + dc, t = tileAt(nr, nc);
+      if (pair && t && t.type === 'O') continue;
       if (!t || solid(t) || prev.has(key(nr, nc))) continue;
       prev.set(key(nr, nc), cur); q.push([nr, nc]);
     }
@@ -691,7 +811,7 @@ function botControl(p: Loose, dt: number): Input {
   // follow the path's tile centres until the last one
   const here = [Math.floor(p.y), Math.floor(p.x)];
   let i = p.path.findIndex((n: Loose) => n[0] === here[0] && n[1] === here[1]);
-  if (i < 0) i = 0;
+  if (i < 0) { i = 0; p.think = Math.min(p.think, 0.05); } // off the path (a portal, a drifting island): plan again
   const atEnd = i >= p.path.length - 1;
   if (g.it) {
     const dx = g.it.x - p.x, dy = g.it.y - p.y, d = Math.hypot(dx, dy);
@@ -715,10 +835,11 @@ function botControl(p: Loose, dt: number): Input {
   return inp;
 }
 
-function loseItem(it: Loose): void { // pulled out through the hull breach
+function loseItem(it: Loose): void { // pulled out through the hull breach, or drifted into the gap between ships
   if (it.kind === 'pot') state.respawns.push({ t: state.t + tune.pot_respawn });
+  const at = state.vent || it;
   removeItem(it); state.lost++; sfx.lost();
-  popup(state.vent.x, state.vent.y - 1.2, 'lost to space!', '#ff8a9a');
+  popup(at.x, at.y - 1.2, 'lost to space!', '#ff8a9a');
   events.push({ type: 'lost', kind: it.kind });
 }
 function updateBelts(dt: number): void {
@@ -767,6 +888,8 @@ function updateItem(it: Loose, dt: number): void {
   if (it.x > COLS - 0.25) { it.x = COLS - 0.25; it.vx = -Math.abs(it.vx) * 0.8; }
   if (it.y < 0.25) { it.y = 0.25; it.vy = Math.abs(it.vy) * 0.8; }
   if (it.y > ROWS - 0.25) { it.y = ROWS - 0.25; it.vy = -Math.abs(it.vy) * 0.8; }
+  if (isVoid(tileAt(Math.floor(it.y), Math.floor(it.x)))) { loseItem(it); return; } // out between the ships
+  if (state.portals.length && warp(it, it.vx, it.vy)) events.push({ type: 'portal', kind: it.kind });
   if (zeroG) {
     // floating items bump cooks gently
     for (const p of state.players) {
@@ -823,6 +946,8 @@ function updatePlay(dt: number): void {
       if (!state.orders.length) state.nextOrder = Math.min(state.nextOrder, state.t + 2);
     }
   }
+  updateIsland(dt);
+  state.warpFlash = Math.max(0, state.warpFlash - dt);
   for (const p of state.players) updatePlayer(p, dt);
   // cooks bump each other (in zero-g they bounce off)
   for (let i = 0; i < state.players.length; i++) for (let j = i + 1; j < state.players.length; j++) {
@@ -1147,6 +1272,19 @@ function drawWall(): void {
       ctx.fillStyle = '#3a4252'; ctx.fillRect(fx - 4, fy - 4, 8, 8); ctx.fillStyle = '#2a3a5a'; ctx.fillRect(fx - 18, fy - 2, 12, 4); ctx.fillRect(fx + 6, fy - 2, 12, 4);
       ctx.fillStyle = Math.floor(state.t * 2 + wi) % 2 ? '#ffd23f' : '#5a4a1a'; ctx.fillRect(fx - 1, fy - 8, 2, 3);
     }
+    if (level.view === 'twin') { // the two ships' hulls, a docking tether sparking between them
+      const ex = x + w * 0.5;
+      ctx.fillStyle = '#3a3358'; rrect(x - 20, y + h * 0.3, w * 0.42, h * 0.4, 14); ctx.fill(); rrect(x + w * 0.58 + 20, y + h * 0.3, w * 0.42, h * 0.4, 14); ctx.fill();
+      ctx.strokeStyle = `rgba(176,108,255,${0.4 + 0.3 * Math.sin(state.t * 5 + wi)})`; ctx.lineWidth = 3; ctx.setLineDash([6, 6]);
+      ctx.beginPath(); ctx.moveTo(x + w * 0.42 - 20, y + h * 0.5); ctx.lineTo(x + w * 0.58 + 20, y + h * 0.5); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#ffd23f'; ellipse(ex, y + h * 0.5, 3, 3); ctx.fill();
+    }
+    if (level.view === 'drift') { // a slow tumble of ice chunks drifting past
+      for (let k = 0; k < 4; k++) {
+        const ax = x + ((k * 71 + wi * 37 + state.t * (3 + k * 2)) % (w + 40)) - 20, ay = y + h * (0.2 + k * 0.2);
+        ctx.save(); ctx.translate(ax, ay); ctx.rotate(state.t * (0.3 + k * 0.2)); ctx.fillStyle = k % 2 ? '#9fd8e8' : '#cfeef5'; ctx.fillRect(-4 - k, -4 - k, 8 + k * 2, 8 + k * 2); ctx.restore();
+      }
+    }
     if (level.view === 'nebula') { // a pink-violet nebula and tumbling rocks
       const ng = ctx.createRadialGradient(x + w * 0.6, y + h * 0.5, 4, x + w * 0.6, y + h * 0.5, w * 0.7);
       ng.addColorStop(0, 'rgba(255,90,160,0.45)'); ng.addColorStop(0.5, 'rgba(140,70,220,0.25)'); ng.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1172,12 +1310,39 @@ function drawWall(): void {
 }
 function drawFloor(): void {
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-    if (MAP[r][c] !== '.') continue; // the floor
+    const t = state.tiles[r][c];
+    if (solid(t) && !t.island) continue; // the floor (and under the island, which leaves floor behind as it moves)
     ctx.fillStyle = (r + c) % 2 ? '#2f394c' : '#344056';
     ctx.fillRect(sx(c), sy(r), TS + 0.5, TD + 0.5);
     ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(sx(c), sy(r), TS, 2);
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     [[6, 6], [TS - 8, 6], [6, TD - 7], [TS - 8, TD - 7]].forEach(([a, b]) => { ctx.fillRect(sx(c) + a, sy(r) + b, 2, 2); });
+  }
+  if (state.island) { // the island's rails, so you can see where it can slide
+    const I = state.island, y = sy(I.r + 0.5);
+    ctx.strokeStyle = 'rgba(91,227,122,0.35)'; ctx.lineWidth = 3; ctx.setLineDash([10, 8]);
+    for (const dy of [-12, 12]) { ctx.beginPath(); ctx.moveTo(sx(I.home - tune.island_reach), y + dy); ctx.lineTo(sx(I.home + I.w + tune.island_reach), y + dy); ctx.stroke(); }
+    ctx.setLineDash([]);
+  }
+  const gap = [...new Set(state.tiles.flat().filter(isVoid).map((t: Loose) => t.c))] as number[];
+  for (const c of gap) { // open space between the ships, cut right through the back wall
+    const x = sx(c), top = 98, bot = sy(ROWS, 0) + CH * TZ + 10;
+    ctx.fillStyle = '#04050c'; ctx.fillRect(x, top, TS, bot - top);
+    for (const s of STARS) { if (s.sp < 0.5) continue; ctx.fillStyle = `rgba(220,230,255,${s.sp * 0.7})`; ctx.fillRect(x + s.x * TS, top + ((s.y * (bot - top) + state.t * 14 * s.sp) % (bot - top)), s.s, s.s); }
+    lineStyle(3); ctx.strokeStyle = '#141824'; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.moveTo(x + TS, top); ctx.lineTo(x + TS, bot); ctx.stroke();
+  }
+  for (const t of state.portals) { // portal pads: a ring of violet light, swirling
+    const cx = sx(t.c + 0.5), cy = sy(t.r + 0.5), k = 0.5 + 0.5 * Math.sin(state.t * 4);
+    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, TS * 0.6); g.addColorStop(0, `rgba(200,150,255,${0.55 + 0.3 * state.warpFlash})`); g.addColorStop(1, 'rgba(120,60,220,0)');
+    ctx.fillStyle = g; ctx.fillRect(cx - TS, cy - TS, TS * 2, TS * 2);
+    ctx.strokeStyle = '#b06cff'; ctx.lineWidth = 4; ellipse(cx, cy, 24, 13); ctx.stroke();
+    ctx.strokeStyle = `rgba(230,210,255,${0.5 + 0.4 * k})`; ctx.lineWidth = 2;
+    for (let j = 0; j < 3; j++) { ctx.beginPath(); ctx.ellipse(cx, cy, 8 + j * 5, 4 + j * 3, 0, state.t * (3 + j) + j * 2, state.t * (3 + j) + j * 2 + 2.2); ctx.stroke(); }
+  }
+  if (state.portals.length === 2) { // a faint beam across the gap between the pads
+    const [a, b] = state.portals, ay = sy(a.r + 0.5), by = sy(b.r + 0.5);
+    ctx.strokeStyle = `rgba(176,108,255,${0.25 + 0.15 * Math.sin(state.t * 6)})`; ctx.lineWidth = 6; ctx.setLineDash([4, 10]); ctx.lineDashOffset = -state.t * 40;
+    ctx.beginPath(); ctx.moveTo(sx(a.c + 0.5), ay); ctx.lineTo(sx(b.c + 0.5), by); ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0;
   }
   if (state.vent) { // a hazard arc on the floor in front of the hull vent
     const vx = sx(state.vent.x), vy = sy(state.vent.y - 0.5);
@@ -1195,7 +1360,7 @@ function boxFaces(c: number, r: number, top: string, front: string, h = CH): { x
 }
 function drawCounter(t: Loose, targets: Map<Loose, Loose>): void {
   const { r, c, type } = t;
-  const { x, yt, yf } = boxFaces(c, r, '#c3ccd8', '#4a5468');
+  const { x, yt, yf } = boxFaces(c, r, t.island ? '#b9e8c4' : '#c3ccd8', t.island ? '#3e5a4e' : '#4a5468');
   // trim and edges
   ctx.fillStyle = level.trim; ctx.fillRect(x, yf + 4, TS, 4);
   ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(x, yt, TS, 3);
@@ -1281,7 +1446,11 @@ function drawWorld(): void {
   const list = [];
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
     const t = state.tiles[r][c];
-    if (solid(t)) list.push({ k: r + 1, f: () => drawCounter(t, targets) });
+    if (isVoid(t)) continue;
+    if (t.island && state.island.off) { // a drifting island counter, drawn between columns
+      const ox = state.island.dir * state.island.off * TS;
+      list.push({ k: r + 1, f: () => { ctx.save(); ctx.translate(ox, 0); drawCounter(t, targets); ctx.restore(); } });
+    } else if (solid(t)) list.push({ k: r + 1, f: () => drawCounter(t, targets) });
   }
   for (const it of state.items) {
     if (it.at === 'counter') list.push({ k: it.tr + 1.001, f: () => { drawItem(it, sx(it.x), sy(it.y, CH) + 6); } });
@@ -1378,7 +1547,7 @@ function drawHUD(): void {
   // gravity status
   const g = state.g, y = H - 34;
   let label, col;
-  if (!g.on) { label = `ZERO-G${level.breach ? ' + BREACH' : level.dark ? ' + BLACKOUT' : ''}  ${Math.ceil(g.end - state.t)}`; col = level.breach ? '#ff8a9a' : level.dark ? '#ffd23f' : '#7ab8ff'; }
+  if (!g.on) { label = `ZERO-G${level.breach ? ' + BREACH' : level.dark ? ' + BLACKOUT' : level.island ? ' + DRIFT' : ''}  ${Math.ceil(g.end - state.t)}`; col = level.breach ? '#ff8a9a' : level.dark ? '#ffd23f' : level.island ? '#5be37a' : '#7ab8ff'; }
   else if (g.warn) { label = `GRAVITY FAILING  ${Math.max(0, Math.ceil(g.next - state.t))}`; col = '#ff5a3d'; }
   else { label = 'GRAVITY  ONLINE'; col = '#5be37a'; }
   ctx.fillStyle = '#1d2436'; rrect(W / 2 - 170, y - 22, 340, 44, 22); ctx.fill(); lineStyle(3); ctx.stroke();
@@ -1389,6 +1558,8 @@ function drawHUD(): void {
     ctx.globalAlpha = Math.min(1, (1.6 - since) * 2); textOutlined('GRAVITY OFFLINE!', W / 2, 150 + since * 20, 54, '#9fd0ff');
     if (level.breach) textOutlined('HULL BREACH: HOLD ON TO EVERYTHING', W / 2, 200 + since * 20, 24, '#ff8a9a');
     if (level.dark) textOutlined('POWER DOWN: FOLLOW THE LAMPS', W / 2, 200 + since * 20, 24, '#ffd23f');
+    if (level.portal) textOutlined('MIND THE GAP: ANYTHING ADRIFT IN IT IS LOST', W / 2, 200 + since * 20, 24, '#d0a8ff');
+    if (level.island) textOutlined('THE ISLAND IS ADRIFT: ONE SIDE WILL CLOSE', W / 2, 200 + since * 20, 24, '#5be37a');
     ctx.globalAlpha = 1;
   }
   if (state.t < 4) { // which shift this is, and its twist
@@ -1416,7 +1587,8 @@ function drawMiniMap(lv: Loose, x: number, y: number, cw: number, chh: number): 
   const m = LEVELS[lv].map;
   for (let r = 0; r < m.length; r++) for (let c = 0; c < m[0].length; c++) {
     const k = m[r][c], px = x + c * cw, py = y + r * chh;
-    ctx.fillStyle = k === '.' ? ((r + c) % 2 ? '#2f394c' : '#344056') : DIRS[k] ? '#1b2130' : k === 'I' ? '#2ec4b6' : k === 'V' ? '#ff3d5a'
+    const isl = LEVELS[lv].island, onIsland = isl && r === isl.r && c >= isl.c && c < isl.c + isl.w && k === '#';
+    ctx.fillStyle = k === '.' ? ((r + c) % 2 ? '#2f394c' : '#344056') : k === ' ' ? '#04050c' : k === 'O' ? '#b06cff' : onIsland ? '#5be37a' : DIRS[k] ? '#1b2130' : k === 'I' ? '#2ec4b6' : k === 'V' ? '#ff3d5a'
       : CRATES[k] ? CRATES[k].label : k === 'S' ? '#262c38' : k === 'H' ? '#5be37a' : k === 'B' ? '#d9a066' : k === 'W' ? '#e8eef5' : k === 'X' ? '#ffd23f' : '#c3ccd8';
     ctx.fillRect(px, py, cw - 1, chh - 1);
     if (DIRS[k]) { ctx.fillStyle = '#7d889c'; const [dx, dy] = DIRS[k]; ctx.fillRect(px + cw / 2 - 1.5 + dx * 3, py + chh / 2 - 1.5 + dy * 2, 3, 3); }
@@ -1477,7 +1649,7 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       clear('#0b0f1a');
       for (const s of STARS) { ctx.fillStyle = `rgba(220,230,255,${0.3 + s.sp * 0.6})`; ctx.fillRect(((s.x * W - state.t * 10 * s.sp) % W + W) % W, s.y * H, s.s * 1.4, s.s * 1.4); }
       textOutlined(TITLE, W / 2, 100, 64, '#ffb36b');
-      text('three galleys · gravity that keeps failing · soup', W / 2, 150, 20, '#9fd0ff', 'center', 'normal');
+      text(`${NUMBER[LEVELS.length]} galleys · gravity that keeps failing · soup`, W / 2, 150, 20, '#9fd0ff', 'center', 'normal');
       for (let i = 0; i < 4; i++) {
         const r = roster[i], x = W / 2 - 300 + i * 200, y = 330;
         ctx.fillStyle = r ? '#1d2436' : '#141a28'; rrect(x - 80, y - 110, 160, 190, 16); ctx.fill(); lineStyle(3); ctx.stroke();
@@ -1522,23 +1694,28 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       for (const s of STARS) { ctx.fillStyle = `rgba(220,230,255,${0.3 + s.sp * 0.6})`; ctx.fillRect(((s.x * W - state.t * 6 * s.sp) % W + W) % W, s.y * H, s.s * 1.2, s.s * 1.2); }
       textOutlined('Choose a galley', W / 2, 70, 48, '#ffb36b');
       text(progress.cheat ? 'Cheat on: every shift is open (type ZERO again to lock them)' : 'Earn 1 star in a shift to open the next one', W / 2, 112, 18, progress.cheat ? '#ffe066' : '#9fd0ff', 'center', 'normal');
+      const gapX = Math.min(305, (W - 40) / LEVELS.length), cw = Math.floor((gapX - 34) / COLS), tw = gapX - 34;
       LEVELS.forEach((lv, i) => {
-        const cx = W / 2 + (i - LAST / 2) * 305, x = cx - 145, y = 150, w = 290, h = 430, sel = i === LV, open = unlocked(i);
+        const cx = W / 2 + (i - LAST / 2) * gapX, w = gapX - 14, x = cx - w / 2, y = 150, h = 430, sel = i === LV, open = unlocked(i);
         ctx.fillStyle = sel ? '#1d2436' : '#141a28'; rrect(x, y, w, h, 18); ctx.fill();
         lineStyle(sel ? 6 : 3); if (sel) ctx.strokeStyle = lv.trim; ctx.stroke();
-        textOutlined(`Shift ${i + 1}`, cx, y + 34, 22, lv.trim);
-        textOutlined(lv.name, cx, y + 70, 26, '#e8eef5');
-        drawMiniMap(i, cx - 127, y + 104, 17, 15);
-        ctx.font = `normal 16px ${FONT}`; // wrap the twist line
-        const words = lv.twist.split(' '); let line = '', ly = y + 268;
-        for (const wd of words) { if (ctx.measureText(line + wd).width > 256) { text(line.trim(), cx, ly, 16, '#c3ccd8', 'center', 'normal'); line = ''; ly += 22; } line += wd + ' '; }
-        text(line.trim(), cx, ly, 16, '#c3ccd8', 'center', 'normal');
-        for (let k = 0; k < 3; k++) drawStarIcon(cx + (k - 1) * 52, y + 362, 20, k < progress.stars[i]);
-        text(progress.best[i] ? `best ${progress.best[i]}` : 'not played yet', cx, y + 404, 15, '#9aa7b8', 'center', 'normal');
+        textOutlined(`Shift ${i + 1}`, cx, y + 30, 20, lv.trim);
+        textOutlined(lv.name, cx, y + 62, w > 250 ? 26 : 20, '#e8eef5');
+        const mh = Math.round(cw * 0.88);
+        drawMiniMap(i, cx - cw * COLS / 2, y + 88, cw, mh);
+        const fs = w > 250 ? 16 : 14, lh = fs + 5; // wrap the twist line
+        ctx.font = `normal ${fs}px ${FONT}`;
+        const words = lv.twist.split(' '); let line = '', ly = y + 88 + mh * 9 + 24;
+        for (const wd of words) { if (ctx.measureText(line + wd).width > tw) { text(line.trim(), cx, ly, fs, '#c3ccd8', 'center', 'normal'); line = ''; ly += lh; } line += wd + ' '; }
+        text(line.trim(), cx, ly, fs, '#c3ccd8', 'center', 'normal');
+        const sr = w > 250 ? 20 : 16;
+        for (let k = 0; k < 3; k++) drawStarIcon(cx + (k - 1) * sr * 2.5, y + 370, sr, k < progress.stars[i]);
+        text(progress.best[i] ? `best ${progress.best[i]}` : 'not played yet', cx, y + 406, 15, '#9aa7b8', 'center', 'normal');
         if (!open) {
           ctx.fillStyle = 'rgba(8,10,18,0.72)'; rrect(x, y, w, h, 18); ctx.fill();
           drawPadlock(cx, y + 190);
-          text(`Earn a star in ${LEVELS[i - 1].name}`, cx, y + 250, 16, '#ffe066', 'center', 'normal');
+          text('Earn a star in', cx, y + 250, 15, '#ffe066', 'center', 'normal');
+          text(LEVELS[i - 1].name, cx, y + 272, 15, '#ffe066', 'center', 'normal');
         }
         if (sel) { const b = Math.sin(state.t * 5) * 5; ctx.fillStyle = lv.trim; ctx.beginPath(); ctx.moveTo(cx - 14, y - 22 + b); ctx.lineTo(cx + 14, y - 22 + b); ctx.lineTo(cx, y - 6 + b); ctx.closePath(); ctx.fill(); lineStyle(2); ctx.stroke(); }
       });
@@ -1589,9 +1766,9 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       textOutlined(`Score ${state.score}${state.newBest ? '  NEW BEST' : ''}`, W / 2, 272, 38, '#ffe066');
       text(`stars at ${LT('star1')} / ${LT('star2')} / ${LT('star3')}`, W / 2, 304, 16, '#9aa7b8', 'center', 'normal');
       if (state.unlockedNow) textOutlined(`${LEVELS[LV + 1].name} is open!`, W / 2, 336, 24, LEVELS[LV + 1].trim);
-      else if (done) text('All four galleys cleared. Go back for three stars each.', W / 2, 336, 18, '#9fe8ff', 'center', 'normal');
+      else if (done) text(`All ${NUMBER[LEVELS.length]} galleys cleared. Go back for three stars each.`, W / 2, 336, 18, '#9fe8ff', 'center', 'normal');
       const lines = [`Soups served: ${state.delivered}${state.spaceDeliveries ? `  (${state.spaceDeliveries} floated in by themselves!)` : ''}  ·  Orders missed: ${state.missed}`,
-        `Gravity failures: ${state.g.failures}  ·  Mid-air catches: ${state.catches}  ·  Dropped: ${state.drops}${level.breach ? `  ·  Lost to space: ${state.lost}` : ''}`];
+        `Gravity failures: ${state.g.failures}  ·  Mid-air catches: ${state.catches}  ·  Dropped: ${state.drops}${level.breach || level.portal ? `  ·  Lost to space: ${state.lost}` : ''}`];
       lines.forEach((l, i) => text(l, W / 2, 380 + i * 28, 18, '#e8eef5', 'center', 'normal'));
       const n = state.players.length, gap = Math.min(230, 1100 / Math.max(1, n));
       state.players.forEach((p: Loose, i: number) => { // each cook's part: every soup they touched counts for them
