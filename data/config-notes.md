@@ -26,6 +26,13 @@ holds no comments. The values themselves are in `data/config.json`.
 - `breach_radius`: tiles; a floating item this close is lost to space
 - `pot_respawn`: s before a lost pot is replaced on its stove
 
+---- Shift 4's twist: the blackout (the power fails with gravity) ----
+- `s4_*`: shift 4's gravity schedule, order pace and stars, read like the `s1_` values
+- `dark_level`: 0 = no blackout, 1 = pitch black away from the lights
+- `dark_fade`: per s, how fast the lights go out and come back
+- `dark_lamp`: tiles, the reach of each cook's helmet lamp
+- `dark_glow`: tiles, the glow around each stove and the serving hatch
+
 ---- Cooks ----
 - `cook_speed`: tiles/s walking
 - `cook_accel`: tiles/s^2 walking start/stop

@@ -1,0 +1,166 @@
+browser	/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+time	2026-11-12 20:08:06
+render	cheap
+ua	HeadlessChrome/157.0.0.0
+scene	0	title
+state	0	title	{"t":0,"score":0,"gained":"","items":[{"id":1,"kind":"pot","chopped":false,"chop":0,"soup":null,"contents":[],"cook":0,"burnt":false,"x":8.5,"y":0.5,"z":0.75,"vx":0,"vy":0,"vz":0,"at":"counter","tr":0
+scene	1	select
+state	1	select	{"t":0.02,"score":0,"gained":"","items":[{"id":1,"kind":"pot","chopped":false,"chop":0,"soup":null,"contents":[],"cook":0,"burnt":false,"x":8.5,"y":0.5,"z":0.75,"vx":0,"vy":0,"vz":0,"at":"counter","tr
+scene	35	play
+state	35	play	{"t":0,"score":0,"gained":"","items":[{"id":1,"kind":"pot","chopped":false,"chop":0,"soup":null,"contents":[],"cook":0,"burnt":false,"x":8.5,"y":0.5,"z":0.75,"vx":0,"vy":0,"vz":0,"at":"counter","tr":0
+playinput	98	KeyD
+frame	3481	c5588ac
+frame	3482	ebcdd4ea
+frame	3483	920392ea
+frame	3484	7411f2df
+frame	3485	c9afc54c
+frame	3486	976ee81
+frame	3487	169d91d8
+frame	3488	f8e2d3c9
+frame	3489	3de1832
+frame	3490	1dad576a
+frame	3491	2617d71b
+frame	3492	22cb0195
+frame	3493	fd210c5f
+frame	3494	39843832
+frame	3495	fceb58a1
+frame	3496	845d7835
+frame	3497	9cd2e22e
+frame	3498	3db4f25e
+frame	3499	eedd73f1
+frame	3500	871c0bd6
+frame	3501	ad8a896b
+frame	3502	45008be8
+frame	3503	ad84ec73
+frame	3504	7b0b19e7
+frame	3505	82c3e980
+frame	3506	fa90627b
+frame	3507	536ec652
+frame	3508	1faec12c
+frame	3509	34e5795a
+frame	3510	e1a148a7
+frame	3511	d7005512
+frame	3512	9cd07fc2
+frame	3513	a034ed05
+frame	3514	dbba12da
+frame	3515	f0a531c4
+frame	3516	b41bd9c1
+frame	3517	fbb0fcf8
+frame	3518	e427e4e3
+frame	3519	95f50011
+frame	3520	797547f0
+frame	3521	aede6fd2
+frame	3522	1e594453
+frame	3523	30bee8ac
+frame	3524	c4c05649
+frame	3525	f41c8ee4
+frame	3526	3caf810f
+frame	3527	270d546c
+frame	3528	d3a6ec5d
+frame	3529	4a7771fc
+frame	3530	4029241
+frame	3531	bb19bf36
+frame	3532	92980823
+frame	3533	852439ef
+frame	3534	65bd158
+frame	3535	58a0f2fb
+frame	3536	15a90481
+frame	3537	b878b4c8
+frame	3538	6df7978a
+frame	3539	38b12765
+frame	3540	22e66693
+frame	3541	6f3441e5
+frame	3542	6f9812f2
+frame	3543	4048eb84
+frame	3544	a9d9313b
+frame	3545	421f4563
+frame	3546	a0bc527
+frame	3547	19475f4d
+frame	3548	4ed69625
+frame	3549	f11cd4ad
+frame	3550	b8fedc71
+frame	3551	78689b87
+frame	3552	573f6342
+frame	3553	af487fae
+frame	3554	1c62cd27
+frame	3555	8cea45fe
+frame	3556	6195eca5
+frame	3557	a6e2b35f
+frame	3558	160c89a
+frame	3559	6712c514
+frame	3560	2a8b2edf
+frame	3561	50123f08
+frame	3562	f1f93e63
+frame	3563	c938739a
+frame	3564	bccb4feb
+frame	3565	895f7f33
+frame	3566	5680773b
+frame	3567	c5e23c0d
+frame	3568	55b87f08
+frame	3569	8f5ad28f
+frame	3570	54f69aca
+frame	3571	a532a66b
+frame	3572	7ef33ef7
+frame	3573	93326a4d
+frame	3574	bd6d8e81
+frame	3575	8fe740ca
+frame	3576	1720089c
+frame	3577	3e94a064
+frame	3578	d0d99b4b
+frame	3579	18dcdea3
+frame	3580	2733fbd9
+frame	3581	375a3a0
+frame	3582	d21a8132
+frame	3583	e4451b1f
+frame	3584	b9880d9b
+frame	3585	e9b033ea
+frame	3586	f4cefb95
+frame	3587	ea3947eb
+frame	3588	133a5631
+frame	3589	8f4a4b1d
+frame	3590	184f3a11
+frame	3591	64379e8
+frame	3592	e1c292d5
+frame	3593	d226be40
+frame	3594	f9769218
+frame	3595	99ce98eb
+frame	3596	a0fc9c72
+frame	3597	aebd6867
+frame	3598	744b8449
+frame	3599	7ec27a17
+frame	3600	35284d24
+state	3600	play	{"t":59.42,"score":0,"gained":"","items":[{"id":1,"kind":"pot","chopped":false,"chop":0,"soup":null,"contents":[],"cook":0,"burnt":false,"x":13.69,"y":0.55,"z":1.44,"vx":0.89,"vy":0.09,"vz":0.23,"at":
+digits	log	18px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 15px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 32px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 13px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 34px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	14px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 22px "Trebuchet MS", Verdana, sans-serif	tabular	0
+loop	log	none	no loop() step was marked
+first	log	none	no state.beat
+pressure	none	the game set no number state.margin in play
+steptime	3600	0.005	0.700
+frametime	60	3.4	7.5	60	0	0
+done	3600	play	stop	60.0	1489
+measured	1280x720
+text	play	canvas	493,193,507,204	20.7	7.84	inside	P1
+text	play	canvas	1073,338,1103,345	13.8	5.27	inside	TRASH
+text	play	canvas	1074,422,1102,429	13.8	8.42	inside	SERVE
+text	play	canvas	1074,464,1102,471	13.8	8.42	inside	SERVE
+text	play	canvas	933,374,967,385	20.7	15.75	inside	BOLT
+text	play	canvas	264,22,332,32	17.9	10.39	inside	Red Nebula
+text	play	canvas	414,22,482,34	17.9	10.39	inside	Comet Kelp
+text	play	canvas	564,22,632,32	17.9	13.24	inside	Red Nebula
+text	play	canvas	714,22,782,34	17.9	13.24	inside	Comet Kelp
+text	play	canvas	82,26,120,36	17.9	6.33	inside	SCORE
+text	play	canvas	93,46,109,69	44.2	14.10	inside	0
+text	play	canvas	1140,26,1218,36	17.9	6.33	inside	SHIFT 1 OF 4
+text	play	canvas	1147,46,1212,70	44.2	15.75	inside	2:00
+text	play	canvas	599,676,700,692	30.4	8.87	inside	ZERO-G  2
+text	play	canvas	1204,680,1256,690	19.3	3.60	inside	C: cheer
+text	play	canvas	25,680,281,693	19.3	3.33	inside	P2: press .  to join   ·   gamepad: press A
+text	play	canvas	46,432,113,444	17.9	6.14	inside	scan to join
+screen	3600	play	55308bc	drawn
+uncaught	0
+shot	/Users/mylen/Projects/r-and-d/overcooked/over-cooked/production/qa/evidence/grow-space-station-galley/story.png	450938

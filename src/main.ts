@@ -1,6 +1,7 @@
-// Space Station Galley: three shifts in three galleys, 1-4 cooks (BOLT the robot helps a solo cook).
+// Space Station Galley: four shifts in four galleys, 1-4 cooks (BOLT the robot helps a solo cook).
 // Gravity cuts out every so often and everything not held floats away. Shift 2 adds a cargo
-// conveyor that never stops; shift 3 a hull breach that pulls floating things out into space.
+// conveyor that never stops; shift 3 a hull breach that pulls floating things out into space;
+// shift 4 a blackout: the power fails with gravity, and only helmet lamps light the kitchen.
 // Chunky toy-like 2.5D: a tilted camera over a box world.
 //
 // The design record is design/game-brief.md. This file holds the scenes, the world, BOLT and
@@ -29,7 +30,7 @@ const CONTROLS = [
 const CHEAP = params.get('render') === 'cheap';
 const events: Loose[] = []; // window.game.events: anything the game wants a run to see
 
-// ---- The galleys: three maps, projection --------------------------------------------------
+// ---- The galleys: four maps, projection --------------------------------------------------
 // '#' counter · T tomato crate · K kelp crate · B chopping board · S stove · W bowl rack
 // H serving hatch · X trash airlock · '.' floor
 // > < ^ v conveyor belt (moves items that way) · I cargo bay (drops crates on the belt)
@@ -71,7 +72,20 @@ const LEVELS = [
       '#.............#',
       '##W##B#V#B#####',
     ] },
+  { key: 's4', name: 'Dark Side Galley', twist: 'When gravity fails, the power fails too. Only your helmet lamp and the stoves give light.',
+    soups: ['red', 'green', 'mixed'], trim: '#ffd23f', view: 'eclipse', dark: true, map: [
+      '#TT##B#W#B##KK#',
+      '#.............#',
+      'H.............#',
+      'H....#SSS#....X',
+      '#.............#',
+      '#.............#',
+      '#.............#',
+      '#.............#',
+      '##W###B#B###W##',
+    ] },
 ];
+const LAST = LEVELS.length - 1;
 const DIRS: Record<string, number[]> = { '>': [1, 0], '<': [-1, 0], '^': [0, -1], 'v': [0, 1] };
 const isBelt = (t: Loose): boolean => !!t && DIRS[t.type] !== undefined;
 let LV = 0, level = LEVELS[0], MAP = level.map, ROWS = MAP.length, COLS = MAP[0].length;
@@ -98,8 +112,10 @@ const KEYSETS = [
 const SPAWNS = [[3.5, 6.5], [11.5, 6.5], [3.5, 2.5], [11.5, 2.5]];
 
 // Progress: stars per shift, kept in this browser only. 1 star unlocks the next shift.
-let progress: { stars: number[]; best: number[]; cheat?: boolean } = { stars: [0, 0, 0], best: [0, 0, 0] };
+let progress: { stars: number[]; best: number[]; cheat?: boolean } = { stars: LEVELS.map(() => 0), best: LEVELS.map(() => 0) };
 try { const j = JSON.parse(localStorage.getItem('ssg-progress') || 'null'); if (j && Array.isArray(j.stars)) progress = j; } catch (e) {}
+// progress saved before a shift was added has no entry for it yet
+for (const k of ['stars', 'best'] as const) { if (!Array.isArray(progress[k])) progress[k] = []; while (progress[k].length < LEVELS.length) progress[k].push(0); }
 function saveProgress(): void { try { localStorage.setItem('ssg-progress', JSON.stringify(progress)); } catch (e) {} }
 const unlocked = (i: number): boolean => params.get('unlock') === 'all' || !!progress.cheat || i === 0 || progress.stars[i - 1] > 0;
 
@@ -361,7 +377,7 @@ function reset(): void {
     nextOrder: 10, delivered: 0, missed: 0, drops: 0, spaceDeliveries: 0, catches: 0, lost: 0, popups: [],
     g: { on: true, warn: false, next: LT('first_zero_g'), end: 0, beep: 0, failures: 0 },
     shake: 0, flash: 0, stars: 0, ended: false, unlockedNow: false, newBest: false,
-    intakeT: 1, intakeFlash: 0, intakeOut: null, vent: null, respawns: [],
+    intakeT: 1, intakeFlash: 0, intakeOut: null, vent: null, respawns: [], dark: 0,
   };
   for (let r = 0; r < ROWS; r++) {
     const row = [];
@@ -775,6 +791,7 @@ function updatePlay(dt: number): void {
     if (state.orders.length < tune.max_orders) addOrder();
     state.nextOrder = nextOrderAt(state.t, tune.shift_length, LT('order_interval_start'), LT('order_interval_end'));
   }
+  if (level.dark) state.dark += ((g.on ? 0 : 1) - state.dark) * Math.min(1, dt * tune.dark_fade); // the blackout
   updateBelts(dt);
   for (const rs of state.respawns.slice()) { // a replacement pot for one lost to space
     if (state.t < rs.t) continue;
@@ -825,12 +842,12 @@ function updatePlay(dt: number): void {
     state.ended = true;
     state.stars = starsFor(state.score, LT('star1'), LT('star2'), LT('star3'));
     state.gained = `${state.stars} star${state.stars === 1 ? '' : 's'}`;
-    const wasLocked = LV < 2 && !unlocked(LV + 1);
+    const wasLocked = LV < LAST && !unlocked(LV + 1);
     state.newBest = state.score > progress.best[LV] && progress.best[LV] > 0;
     progress.stars[LV] = Math.max(progress.stars[LV], state.stars); progress.best[LV] = Math.max(progress.best[LV], state.score);
     saveProgress();
     state.unlockedNow = wasLocked && unlocked(LV + 1);
-    if (state.unlockedNow || (LV === 2 && state.stars > 0)) sfx.unlock();
+    if (state.unlockedNow || (LV === LAST && state.stars > 0)) sfx.unlock();
     scene = 'results'; tone(523, 0.2, 'triangle', 0.25); tone(784, 0.3, 'triangle', 0.25, 0.2);
     events.push({ type: 'end', score: state.score, stars: state.stars });
   }
@@ -1068,6 +1085,19 @@ function drawWall(): void {
       ctx.fillStyle = '#5b6577'; ctx.fillRect(fx - 30, fy - 6, 60, 12); ctx.fillStyle = '#2ec4b6'; ctx.fillRect(fx - 26, fy - 4, 10, 8); ctx.fillRect(fx - 12, fy - 4, 10, 8); ctx.fillRect(fx + 2, fy - 4, 10, 8);
       ctx.fillStyle = '#ffb36b'; ctx.fillRect(fx + 30, fy - 3, 6, 6);
     }
+    if (level.view === 'eclipse' && wi === 1) { // the sun behind a dark moon: a burning ring and its corona
+      const ex = x + w * 0.5, ey = y + h * 0.55, er = Math.min(w, h) * 0.3;
+      const co = ctx.createRadialGradient(ex, ey, er * 0.9, ex, ey, er * 2.2);
+      co.addColorStop(0, 'rgba(255,230,150,0.75)'); co.addColorStop(0.4, 'rgba(255,170,60,0.25)'); co.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = co; ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#05060c'; ellipse(ex, ey, er, er); ctx.fill();
+      lineStyle(3); ctx.strokeStyle = '#fff1c0'; ellipse(ex, ey, er, er); ctx.stroke();
+    }
+    if (level.view === 'eclipse' && wi !== 1) { // dim relay satellites blinking in the dark
+      const fx = x + ((state.t * 5 + wi * 140) % (w + 60)) - 30, fy = y + h * (0.3 + wi * 0.15);
+      ctx.fillStyle = '#3a4252'; ctx.fillRect(fx - 4, fy - 4, 8, 8); ctx.fillStyle = '#2a3a5a'; ctx.fillRect(fx - 18, fy - 2, 12, 4); ctx.fillRect(fx + 6, fy - 2, 12, 4);
+      ctx.fillStyle = Math.floor(state.t * 2 + wi) % 2 ? '#ffd23f' : '#5a4a1a'; ctx.fillRect(fx - 1, fy - 8, 2, 3);
+    }
     if (level.view === 'nebula') { // a pink-violet nebula and tumbling rocks
       const ng = ctx.createRadialGradient(x + w * 0.6, y + h * 0.5, 4, x + w * 0.6, y + h * 0.5, w * 0.7);
       ng.addColorStop(0, 'rgba(255,90,160,0.45)'); ng.addColorStop(0.5, 'rgba(140,70,220,0.25)'); ng.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1249,6 +1279,32 @@ function drawLight(): void {
     ctx.fillStyle = `rgba(255,40,40,${0.06 + 0.06 * Math.max(0, Math.sin(state.t * 8))})`; ctx.fillRect(0, 0, W, H);
   } else if (state.g.warn && Math.floor(state.t * 4) % 2 === 0) { ctx.fillStyle = 'rgba(255,40,40,0.08)'; ctx.fillRect(0, 0, W, H); }
   if (state.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${state.flash * 0.35})`; ctx.fillRect(0, 0, W, H); }
+  if (level.dark && state.dark > 0.01) drawBlackout();
+}
+
+let darkLayer: HTMLCanvasElement | null = null;
+/** The blackout: darkness over the galley with holes for each cook's helmet lamp and the stove and hatch glow. */
+function drawBlackout(): void {
+  if (!darkLayer) { darkLayer = document.createElement('canvas'); darkLayer.width = W; darkLayer.height = H; }
+  const d = darkLayer.getContext('2d')!;
+  d.globalCompositeOperation = 'source-over'; d.clearRect(0, 0, W, H);
+  const flicker = state.g.warn || state.dark < 0.98 ? 0.92 + 0.08 * Math.sin(state.t * 37) : 1;
+  d.fillStyle = `rgba(2,3,10,${tune.dark_level * state.dark * flicker})`; d.fillRect(0, 0, W, H);
+  d.globalCompositeOperation = 'destination-out';
+  const hole = (x: number, y: number, r: number, k: number) => {
+    const g = d.createRadialGradient(x, y, r * 0.15, x, y, r);
+    g.addColorStop(0, `rgba(0,0,0,${k})`); g.addColorStop(0.6, `rgba(0,0,0,${k * 0.7})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+    d.fillStyle = g; d.beginPath(); d.ellipse(x, y, r, r * TD / TS, 0, 0, Math.PI * 2); d.fill();
+  };
+  for (const t of state.tiles.flat()) if (t.type === 'S' || t.type === 'H') hole(sx(t.c + 0.5), sy(t.r + 0.5, CH), tune.dark_glow * TS, 0.85);
+  for (const p of state.players) { // a lamp on each helmet, thrown a little ahead of the cook
+    const x = sx(p.x + p.fx * 0.6), y = sy(p.y + p.fy * 0.6, p.z);
+    hole(x, y - 20, tune.dark_lamp * TS, 1); hole(sx(p.x), sy(p.y, p.z) - 30, TS * 0.7, 1);
+  }
+  ctx.drawImage(darkLayer, 0, 0, W, H);
+  ctx.save(); ctx.globalAlpha = 0.12 * state.dark; // warm light where the lamps fall
+  for (const p of state.players) { const x = sx(p.x + p.fx * 0.6), y = sy(p.y + p.fy * 0.6, p.z) - 20, g = ctx.createRadialGradient(x, y, 4, x, y, tune.dark_lamp * TS); g.addColorStop(0, 'rgba(255,230,160,0.9)'); g.addColorStop(1, 'rgba(255,230,160,0)'); ctx.fillStyle = g; ctx.fillRect(x - tune.dark_lamp * TS, y - tune.dark_lamp * TS, tune.dark_lamp * TS * 2, tune.dark_lamp * TS * 2); }
+  ctx.restore();
 }
 
 function drawHUD(): void {
@@ -1268,11 +1324,11 @@ function drawHUD(): void {
   text('SCORE', 101, 32, 13, '#9aa7b8'); textOutlined(`${state.score}`, 101, 60, 32, '#ffe066');
   const left = Math.max(0, tune.shift_length - state.t), mm = Math.floor(left / 60), ss = Math.floor(left % 60);
   ctx.fillStyle = '#1d2436'; rrect(W - 186, 14, 170, 70, 12); ctx.fill(); lineStyle(3); ctx.stroke();
-  text(`SHIFT ${LV + 1} OF 3`, W - 101, 32, 13, '#9aa7b8'); textOutlined(`${mm}:${String(ss).padStart(2, '0')}`, W - 101, 60, 32, left < 20 && Math.floor(state.t * 2) % 2 ? '#ff6b6b' : '#e8eef5');
+  text(`SHIFT ${LV + 1} OF ${LEVELS.length}`, W - 101, 32, 13, '#9aa7b8'); textOutlined(`${mm}:${String(ss).padStart(2, '0')}`, W - 101, 60, 32, left < 20 && Math.floor(state.t * 2) % 2 ? '#ff6b6b' : '#e8eef5');
   // gravity status
   const g = state.g, y = H - 34;
   let label, col;
-  if (!g.on) { label = level.breach ? `ZERO-G + BREACH  ${Math.ceil(g.end - state.t)}` : `ZERO-G  ${Math.ceil(g.end - state.t)}`; col = level.breach ? '#ff8a9a' : '#7ab8ff'; }
+  if (!g.on) { label = `ZERO-G${level.breach ? ' + BREACH' : level.dark ? ' + BLACKOUT' : ''}  ${Math.ceil(g.end - state.t)}`; col = level.breach ? '#ff8a9a' : level.dark ? '#ffd23f' : '#7ab8ff'; }
   else if (g.warn) { label = `GRAVITY FAILING  ${Math.max(0, Math.ceil(g.next - state.t))}`; col = '#ff5a3d'; }
   else { label = 'GRAVITY  ONLINE'; col = '#5be37a'; }
   ctx.fillStyle = '#1d2436'; rrect(W / 2 - 170, y - 22, 340, 44, 22); ctx.fill(); lineStyle(3); ctx.stroke();
@@ -1282,6 +1338,7 @@ function drawHUD(): void {
   if (!g.on && since < 1.6) {
     ctx.globalAlpha = Math.min(1, (1.6 - since) * 2); textOutlined('GRAVITY OFFLINE!', W / 2, 150 + since * 20, 54, '#9fd0ff');
     if (level.breach) textOutlined('HULL BREACH: HOLD ON TO EVERYTHING', W / 2, 200 + since * 20, 24, '#ff8a9a');
+    if (level.dark) textOutlined('POWER DOWN: FOLLOW THE LAMPS', W / 2, 200 + since * 20, 24, '#ffd23f');
     ctx.globalAlpha = 1;
   }
   if (state.t < 4) { // which shift this is, and its twist
@@ -1395,7 +1452,7 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       const left = pressed('KeyA') || pressed('ArrowLeft') || padsNow.some((gp, i) => gp && padEdge(i, 14));
       const right = pressed('KeyD') || pressed('ArrowRight') || padsNow.some((gp, i) => gp && padEdge(i, 15));
       if (left && LV > 0) { LV--; sfx.select(); }
-      if (right && LV < 2) { LV++; sfx.select(); }
+      if (right && LV < LAST) { LV++; sfx.select(); }
       if (anyStart()) { if (unlocked(LV)) startShift(LV); else sfx.buzz(); return; }
       if (pressed('Escape')) scene = 'title';
       if (cheatTyped()) {
@@ -1412,18 +1469,18 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
       textOutlined('Choose a galley', W / 2, 70, 48, '#ffb36b');
       text(progress.cheat ? 'Cheat on: every shift is open (type ZERO again to lock them)' : 'Earn 1 star in a shift to open the next one', W / 2, 112, 18, progress.cheat ? '#ffe066' : '#9fd0ff', 'center', 'normal');
       LEVELS.forEach((lv, i) => {
-        const cx = W / 2 + (i - 1) * 400, x = cx - 180, y = 150, w = 360, h = 430, sel = i === LV, open = unlocked(i);
+        const cx = W / 2 + (i - LAST / 2) * 305, x = cx - 145, y = 150, w = 290, h = 430, sel = i === LV, open = unlocked(i);
         ctx.fillStyle = sel ? '#1d2436' : '#141a28'; rrect(x, y, w, h, 18); ctx.fill();
         lineStyle(sel ? 6 : 3); if (sel) ctx.strokeStyle = lv.trim; ctx.stroke();
         textOutlined(`Shift ${i + 1}`, cx, y + 34, 22, lv.trim);
-        textOutlined(lv.name, cx, y + 70, 30, '#e8eef5');
-        drawMiniMap(i, cx - 150, y + 100, 20, 16);
+        textOutlined(lv.name, cx, y + 70, 26, '#e8eef5');
+        drawMiniMap(i, cx - 127, y + 104, 17, 15);
         ctx.font = `normal 16px ${FONT}`; // wrap the twist line
         const words = lv.twist.split(' '); let line = '', ly = y + 268;
-        for (const wd of words) { if (ctx.measureText(line + wd).width > 320) { text(line.trim(), cx, ly, 16, '#c3ccd8', 'center', 'normal'); line = ''; ly += 22; } line += wd + ' '; }
+        for (const wd of words) { if (ctx.measureText(line + wd).width > 256) { text(line.trim(), cx, ly, 16, '#c3ccd8', 'center', 'normal'); line = ''; ly += 22; } line += wd + ' '; }
         text(line.trim(), cx, ly, 16, '#c3ccd8', 'center', 'normal');
-        for (let k = 0; k < 3; k++) drawStarIcon(cx + (k - 1) * 56, y + 352, 22, k < progress.stars[i]);
-        text(progress.best[i] ? `best ${progress.best[i]}` : 'not played yet', cx, y + 398, 15, '#9aa7b8', 'center', 'normal');
+        for (let k = 0; k < 3; k++) drawStarIcon(cx + (k - 1) * 52, y + 362, 20, k < progress.stars[i]);
+        text(progress.best[i] ? `best ${progress.best[i]}` : 'not played yet', cx, y + 404, 15, '#9aa7b8', 'center', 'normal');
         if (!open) {
           ctx.fillStyle = 'rgba(8,10,18,0.72)'; rrect(x, y, w, h, 18); ctx.fill();
           drawPadlock(cx, y + 190);
@@ -1464,7 +1521,7 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
   },
   results: {
     update() {
-      const next = state.stars > 0 && LV < 2;
+      const next = state.stars > 0 && LV < LAST;
       if (anyStart()) { startShift(next ? LV + 1 : LV); return; }
       if (pressed('KeyR')) { startShift(LV); return; }
       if (pressed('Escape')) scene = 'select';
@@ -1472,13 +1529,13 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
     draw() {
       scenes.play.draw();
       ctx.fillStyle = 'rgba(8,10,18,0.8)'; ctx.fillRect(0, 0, W, H);
-      const done = LV === 2 && state.stars > 0;
+      const done = LV === LAST && state.stars > 0;
       textOutlined(done ? 'The station is fed!' : `${level.name}: shift over!`, W / 2, 96, 50, '#ffb36b');
       for (let i = 0; i < 3; i++) drawStarIcon(W / 2 + (i - 1) * 110, 190, 42, i < state.stars);
       textOutlined(`Score ${state.score}${state.newBest ? '  NEW BEST' : ''}`, W / 2, 272, 38, '#ffe066');
       text(`stars at ${LT('star1')} / ${LT('star2')} / ${LT('star3')}`, W / 2, 304, 16, '#9aa7b8', 'center', 'normal');
       if (state.unlockedNow) textOutlined(`${LEVELS[LV + 1].name} is open!`, W / 2, 336, 24, LEVELS[LV + 1].trim);
-      else if (done) text('All three galleys cleared. Go back for three stars each.', W / 2, 336, 18, '#9fe8ff', 'center', 'normal');
+      else if (done) text('All four galleys cleared. Go back for three stars each.', W / 2, 336, 18, '#9fe8ff', 'center', 'normal');
       const lines = [`Soups served: ${state.delivered}${state.spaceDeliveries ? `  (${state.spaceDeliveries} floated in by themselves!)` : ''}  ·  Orders missed: ${state.missed}`,
         `Gravity failures: ${state.g.failures}  ·  Mid-air catches: ${state.catches}  ·  Dropped: ${state.drops}${level.breach ? `  ·  Lost to space: ${state.lost}` : ''}`];
       lines.forEach((l, i) => text(l, W / 2, 380 + i * 28, 18, '#e8eef5', 'center', 'normal'));
@@ -1489,7 +1546,7 @@ const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
         text(`helped on ${p.helped} soup${p.helped === 1 ? '' : 's'}`, x, 498, 15, '#e8eef5', 'center', 'normal');
         text(`${p.delivered} served · ${p.catches} catches`, x, 520, 15, '#c3ccd8', 'center', 'normal');
       });
-      const nextLine = state.stars > 0 && LV < 2 ? `Enter: next shift (${LEVELS[LV + 1].name})` : state.stars > 0 ? 'Enter: play it again' : 'Enter: try again (1 star opens the next galley)';
+      const nextLine = state.stars > 0 && LV < LAST ? `Enter: next shift (${LEVELS[LV + 1].name})` : state.stars > 0 ? 'Enter: play it again' : 'Enter: try again (1 star opens the next galley)';
       textOutlined(nextLine, W / 2, 610, 26, '#ffffff');
       text('R: replay this shift   ·   Esc: choose a galley', W / 2, 652, 18, '#c3ccd8', 'center', 'normal');
     },
@@ -1533,7 +1590,7 @@ Object.defineProperties(window.game!, {
 });
 
 openRoom();
-LV = Math.max(0, Math.min(2, (Number(params.get('shift')) || 1) - 1));
+LV = Math.max(0, Math.min(LAST, (Number(params.get('shift')) || 1) - 1));
 reset();
 scene = params.get('scene') || 'title';
 if (scene === 'play' && !roster.length) { join(KEYSETS[0]); if (params.get('solo') !== '1') join(KEYSETS[1]); reset(); }

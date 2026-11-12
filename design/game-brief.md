@@ -53,6 +53,7 @@ Shift 1 is gentle: two soups, one gravity failure early. Shift 2 adds a conveyor
 - [x] Shift-select screen with stars, and an end screen showing each cook's part (shared credit)
 - [x] One cheer key: every cook cheers (team signals)
 - [x] Cheat code: type ZERO on the shift select to unlock every shift (again to lock them)
+- [x] Shift 4, Dark Side Galley: the power fails with gravity, so only helmet lamps, stoves and the hatch light the kitchen
 
 ## Keep
 - love it, the whole game as built *(you said)*
