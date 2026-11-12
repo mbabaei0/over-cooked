@@ -1,21 +1,24 @@
-// The game: the one-shot's script, carried over as it was. The grow step splits it
-// by what the code does and moves it to TypeScript.
-import './config.js';
-import './vendor.js';
-
-'use strict';
 // Space Station Galley: three shifts in three galleys, 1-4 cooks (BOLT the robot helps a solo cook).
 // Gravity cuts out every so often and everything not held floats away. Shift 2 adds a cargo
 // conveyor that never stops; shift 3 a hull breach that pulls floating things out into space.
 // Chunky toy-like 2.5D: a tilted camera over a box world.
+//
+// The design record is design/game-brief.md. This file holds the scenes, the world, BOLT and
+// the loop; the browser-free rules are in game/, the screen, input and sound in their modules.
+import { Peer } from 'peerjs';
+import qrcode from 'qrcode-generator';
+import { CONFIG, tune } from './config';
+import { params, manual, clock, seedFrom, install } from './hook';
+import { W, H, FONT, ctx, baseTransform, clear, text, textOutlined, lineStyle, rrect, ellipse } from './screen';
+import { down, hit, pressed, padsNow, padPrev, readPads, padBtn, padEdge, savePads } from './input';
+import { muted, setMuted, tone, sweep, sfx } from './audio';
+import { rng, setSeed, soupOfContents, isPotDone, fitsRecipe, deliveryPoints, scoreAfterMiss, nextOrderAt, starsFor, type SoupType } from './game/rules';
+import type { Loose, Input, Cell } from './game/types';
+
+type QRCode = ReturnType<typeof qrcode>;
 
 // ---- Built to be checked ----------------------------------------------------------------
-const params = new URLSearchParams(location.search);
-const tune = new Proxy({}, { get: (_, k) => CONFIG[k].value }); // live: tune.speed is CONFIG.speed.value
 const STEP = 1 / 60;            // simulation step in seconds; motion is per second, never per frame
-const W = 1280, H = 720;        // logical size
-const PIXEL = false;
-const FONT = '"Trebuchet MS", Verdana, sans-serif';
 const TITLE = 'Space Station Galley';
 const CONTROLS = [
   'P1  WASD move  ·  F grab / place / throw  ·  G chop / dash',
@@ -23,119 +26,8 @@ const CONTROLS = [
   'Gamepads  stick move  ·  A grab  ·  X chop / dash  ·  Y cheer',
   'C cheer (everyone cheers)  ·  P pause  ·  M mute  ·  Phones: scan the QR code',
 ];
-const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 }; // a check may inject one
 const CHEAP = params.get('render') === 'cheap';
-let seed;
-function rng() { // mulberry32; every gameplay random call reads this, never Math.random
-  seed = (seed + 0x6D2B79F5) | 0;
-  let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-}
-const events = []; // window.game.events: anything the game wants a run to see
-
-// ---- Screen ---------------------------------------------------------------------------
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-function fit() {
-  const k = Math.min(innerWidth / W, innerHeight / H);
-  const s = PIXEL ? Math.max(1, Math.floor(k)) : k;
-  const r = PIXEL ? 1 : s * (devicePixelRatio || 1);
-  canvas.width = Math.round(W * r); canvas.height = Math.round(H * r);
-  canvas.style.width = Math.round(W * s) + 'px'; canvas.style.height = Math.round(H * s) + 'px';
-  canvas.style.marginTop = Math.max(0, Math.floor((innerHeight - H * s) / 2)) + 'px';
-  canvas.style.imageRendering = PIXEL ? 'pixelated' : 'auto';
-  ctx.setTransform(r, 0, 0, r, 0, 0); ctx.imageSmoothingEnabled = !PIXEL;
-  baseTransform = ctx.getTransform();
-}
-let baseTransform;
-addEventListener('resize', fit); fit();
-function clear(c) { ctx.fillStyle = c; ctx.fillRect(0, 0, W, H); }
-function text(s, x, y, size, c, align = 'center', weight = 'bold') {
-  ctx.fillStyle = c; ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align;
-  ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
-}
-function textOutlined(s, x, y, size, c, align = 'center') {
-  ctx.font = `bold ${size}px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(3, size / 6); ctx.strokeStyle = '#10141f';
-  ctx.strokeText(s, x, y); ctx.fillStyle = c; ctx.fillText(s, x, y);
-}
-
-// ---- Input: keys by position (event.code), OS key repeat ignored ------------------------
-const down = new Set(), hit = new Set();
-const pressed = code => hit.has(code);
-const GAME_KEYS = new Set(['Space', 'Period', 'Slash', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
-const PAD_KEEP = [0, 2, 3, 9, 14, 15];
-addEventListener('keydown', e => {
-  startAudio();
-  if (!e.repeat) { down.add(e.code); hit.add(e.code); }
-  if (GAME_KEYS.has(e.code)) e.preventDefault();
-});
-addEventListener('keyup', e => down.delete(e.code));
-addEventListener('pointerdown', () => startAudio());
-addEventListener('blur', () => down.clear());
-
-// Gamepads: read once a step; edges kept per pad.
-let padsNow = [];
-const padPrev = {};
-function readPads() {
-  try { padsNow = navigator.getGamepads ? Array.from(navigator.getGamepads()) : []; } catch (e) { padsNow = []; }
-}
-function padBtn(gp, i) { return !!(gp && gp.buttons[i] && gp.buttons[i].pressed); }
-function padEdge(i, b) { const gp = padsNow[i]; return padBtn(gp, b) && !((padPrev[i] || {})[b]); }
-function savePads() {
-  padsNow.forEach((gp, i) => { if (gp) { const o = {}; PAD_KEEP.forEach(b => { o[b] = padBtn(gp, b); }); padPrev[i] = o; } });
-}
-
-// ---- Audio: started on first input, mute on M --------------------------------------------
-let audio = null, muted = false;
-function startAudio() {
-  if (!audio) {
-    const ac = window.GAME_AUDIO || new (window.AudioContext || window.webkitAudioContext)();
-    const out = ac.createGain(); out.gain.value = muted ? 0 : tune.volume;
-    out.connect(ac.destination); audio = { ac, out };
-  }
-  if (audio.ac.state === 'suspended') audio.ac.resume();
-}
-function setMuted(m) { muted = m; if (audio) audio.out.gain.value = m ? 0 : tune.volume; }
-addEventListener('tune', () => setMuted(muted));
-function tone(freq, dur, type = 'square', vol = 0.3, delay = 0) {
-  if (!audio || muted) return;
-  const t = audio.ac.currentTime + delay, o = audio.ac.createOscillator(), g = audio.ac.createGain();
-  o.type = type; o.frequency.value = freq;
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(audio.out); o.start(t); o.stop(t + dur);
-}
-function sweep(f0, f1, dur, type = 'sine', vol = 0.25) {
-  if (!audio || muted) return;
-  const t = audio.ac.currentTime, o = audio.ac.createOscillator(), g = audio.ac.createGain();
-  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(audio.out); o.start(t); o.stop(t + dur);
-}
-const sfx = {
-  pick: () => tone(560, 0.06, 'triangle', 0.25),
-  place: () => tone(360, 0.07, 'triangle', 0.25),
-  chop: () => { tone(170, 0.04, 'square', 0.15); tone(90, 0.05, 'triangle', 0.2); },
-  chopped: () => { tone(660, 0.06, 'triangle', 0.2); tone(880, 0.08, 'triangle', 0.2, 0.06); },
-  plop: () => sweep(300, 600, 0.12, 'sine', 0.25),
-  serve: () => { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.14, 'triangle', 0.22, i * 0.07)); },
-  buzz: () => tone(110, 0.18, 'sawtooth', 0.15),
-  dash: () => sweep(500, 180, 0.15, 'sine', 0.2),
-  toss: () => sweep(300, 700, 0.1, 'sine', 0.18),
-  alarm: () => { tone(880, 0.12, 'square', 0.12); tone(660, 0.12, 'square', 0.12, 0.13); },
-  gravOff: () => { sweep(400, 60, 0.9, 'sawtooth', 0.18); sweep(800, 1600, 1.2, 'sine', 0.1); },
-  gravOn: () => { sweep(80, 300, 0.4, 'square', 0.15); tone(60, 0.3, 'sine', 0.35, 0.35); },
-  land: () => tone(140, 0.05, 'triangle', 0.12),
-  done: () => { tone(988, 0.1, 'sine', 0.2); tone(1318, 0.14, 'sine', 0.2, 0.1); },
-  missed: () => { tone(300, 0.15, 'sawtooth', 0.12); tone(200, 0.25, 'sawtooth', 0.12, 0.15); },
-  burn: () => tone(70, 0.4, 'sawtooth', 0.15),
-  cheer: () => { [392, 523, 659, 784].forEach((f, i) => tone(f, 0.12, 'square', 0.12, i * 0.05)); sweep(600, 1200, 0.3, 'triangle', 0.1); },
-  thunk: () => { tone(90, 0.08, 'square', 0.12); tone(180, 0.05, 'triangle', 0.12, 0.05); },
-  lost: () => sweep(900, 60, 0.6, 'sawtooth', 0.14),
-  unlock: () => { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.16, 'triangle', 0.2, i * 0.08)); },
-  select: () => tone(440, 0.05, 'triangle', 0.2),
-};
+const events: Loose[] = []; // window.game.events: anything the game wants a run to see
 
 // ---- The galleys: three maps, projection --------------------------------------------------
 // '#' counter · T tomato crate · K kelp crate · B chopping board · S stove · W bowl rack
@@ -180,16 +72,16 @@ const LEVELS = [
       '##W##B#V#B#####',
     ] },
 ];
-const DIRS = { '>': [1, 0], '<': [-1, 0], '^': [0, -1], 'v': [0, 1] };
-const isBelt = t => !!t && DIRS[t.type] !== undefined;
+const DIRS: Record<string, number[]> = { '>': [1, 0], '<': [-1, 0], '^': [0, -1], 'v': [0, 1] };
+const isBelt = (t: Loose): boolean => !!t && DIRS[t.type] !== undefined;
 let LV = 0, level = LEVELS[0], MAP = level.map, ROWS = MAP.length, COLS = MAP[0].length;
-const LT = name => tune[`${level.key}_${name}`]; // a per-shift tuning value
+const LT = (name: string): number => tune[`${level.key}_${name}`]; // a per-shift tuning value
 const TS = 64, TD = 42, TZ = 48, CH = 0.75; // tile width px, tile depth px, px per unit height, counter height
 let X0 = (W - COLS * TS) / 2;
 const Y0 = 236;
-const sx = x => X0 + x * TS;
-const sy = (y, z = 0) => Y0 + y * TD - z * TZ;
-const SOUPS = {
+const sx = (x: number): number => X0 + x * TS;
+const sy = (y: number, z = 0): number => Y0 + y * TD - z * TZ;
+const SOUPS: Record<string, { name: string; color: string; rim: string; recipe: string[] }> = {
   red: { name: 'Red Nebula', color: '#e8473b', rim: '#ff8a6b', recipe: ['tomato', 'tomato'] },
   green: { name: 'Comet Kelp', color: '#4fbf5a', rim: '#9be38a', recipe: ['kelp', 'kelp'] },
   mixed: { name: 'Eclipse Mix', color: '#f0902e', rim: '#ffc46b', recipe: ['tomato', 'kelp'] },
@@ -208,31 +100,31 @@ const SPAWNS = [[3.5, 6.5], [11.5, 6.5], [3.5, 2.5], [11.5, 2.5]];
 // Progress: stars per shift, kept in this browser only. 1 star unlocks the next shift.
 let progress = { stars: [0, 0, 0], best: [0, 0, 0] };
 try { const j = JSON.parse(localStorage.getItem('ssg-progress') || 'null'); if (j && Array.isArray(j.stars)) progress = j; } catch (e) {}
-function saveProgress() { try { localStorage.setItem('ssg-progress', JSON.stringify(progress)); } catch (e) {} }
-const unlocked = i => params.get('unlock') === 'all' || i === 0 || progress.stars[i - 1] > 0;
+function saveProgress(): void { try { localStorage.setItem('ssg-progress', JSON.stringify(progress)); } catch (e) {} }
+const unlocked = (i: number): boolean => params.get('unlock') === 'all' || i === 0 || progress.stars[i - 1] > 0;
 const R = 0.32; // cook radius in tiles
 
 // Stars on the window: fixed by a hash, not gameplay chance.
 const STARS = Array.from({ length: 90 }, (_, i) => {
-  const h = n => { const x = Math.sin(i * 127.1 + n * 311.7) * 43758.5453; return x - Math.floor(x); };
+  const h = (n: number): number => { const x = Math.sin(i * 127.1 + n * 311.7) * 43758.5453; return x - Math.floor(x); };
   return { x: h(1), y: h(2), s: 0.5 + h(3) * 1.6, sp: 0.3 + h(4) };
 });
 
 // ---- Players (the roster survives a restart) ----------------------------------------------
-let roster = [];
-function join(ctl) {
+let roster: Loose[] = [];
+function join(ctl: Loose): void {
   if (roster.length >= 4) return;
   const r = { i: roster.length, ctl, name: 'P' + (roster.length + 1) };
   roster.push(r);
   if (state && state.players && (scene === 'play')) {
     state.players.push(makePlayer(r));
-    const bot = state.players.find(p => p.bot); // a second person took the seat: BOLT steps out
+    const bot = state.players.find((p: Loose) => p.bot); // a second person took the seat: BOLT steps out
     if (bot && roster.length >= 2) { if (bot.held) { const it = bot.held; bot.held = null; it.x = bot.x; it.y = bot.y; setAir(it, 0, 0, 1); } state.players.splice(state.players.indexOf(bot), 1); }
   }
   tone(660, 0.08, 'triangle'); tone(990, 0.1, 'triangle', 0.3, 0.08);
   events.push({ type: 'join', name: r.name });
 }
-function checkJoins(consume) {
+function checkJoins(consume: boolean): void {
   KEYSETS.forEach(k => {
     if (pressed(k.grab) && !roster.some(r => r.ctl === k)) { join(k); if (consume) hit.delete(k.grab); }
   });
@@ -242,14 +134,14 @@ function checkJoins(consume) {
     }
   });
 }
-function makePlayer(r) {
+function makePlayer(r: Loose): Loose {
   const [x, y] = SPAWNS[r.bot ? 1 : r.i];
   if (r.ctl.kind === 'phone') { r.ctl.grabSeen = r.ctl.grabN; r.ctl.useSeen = r.ctl.useN; } // title presses don't carry in
   return { r, x, y, vx: 0, vy: 0, z: 0, fx: 0, fy: 1, held: null, dashT: 0, dashCd: 0, chopping: false,
     delivered: 0, helped: 0, chops: 0, catches: 0, tilt: 0, walk: 0, cheerT: 0, bot: !!r.bot,
     think: 0, goal: null, path: null, actCd: 0 };
 }
-function readInput(p) {
+function readInput(p: Loose): Input {
   const c = p.r.ctl, inp = { mx: 0, my: 0, grab: false, useHeld: false, usePressed: false };
   if (c.kind === 'keys') {
     inp.mx = (down.has(c.r) ? 1 : 0) - (down.has(c.l) ? 1 : 0);
@@ -281,20 +173,21 @@ function readInput(p) {
 // ?phones=0 turns this off. ?ctl=http://192.168.1.10:8000 points the QR at another origin
 // (use it when the game itself is open on localhost, which a phone cannot reach).
 const ROOM_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
-const net = { peer: null, id: '', url: '', status: 'off', error: '', qr: null, start: false, cheer: false, scene: '' };
-const phones = new Map(); // phone's client id -> controller; survives a dropped connection
-function roomId() {
+const net: { peer: Peer | null; id: string; url: string; status: string; error: string; qr: QRCode | null; start: boolean; cheer: boolean; scene: string } =
+  { peer: null, id: '', url: '', status: 'off', error: '', qr: null, start: false, cheer: false, scene: '' };
+const phones = new Map<string, Loose>(); // phone's client id -> controller; survives a dropped connection
+function roomId(): string {
   const b = crypto.getRandomValues(new Uint8Array(5));
   return 'ssg-' + Array.from(b, x => ROOM_CHARS[x % ROOM_CHARS.length]).join('');
 }
-function controllerUrl(id) {
+function controllerUrl(id: string): string {
   const u = new URL('controller.html', location.href);
-  if (params.get('ctl')) { const o = new URL(params.get('ctl')); u.protocol = o.protocol; u.host = o.host; }
+  if (params.get('ctl')) { const o = new URL(params.get('ctl')!); u.protocol = o.protocol; u.host = o.host; }
   u.search = ''; u.hash = ''; u.searchParams.set('room', id);
   return u.href;
 }
-function openRoom() {
-  if (!window.Peer || !window.qrcode || params.get('phones') === '0') return;
+function openRoom(): void {
+  if (params.get('phones') === '0') return;
   net.id = roomId(); net.url = controllerUrl(net.id); net.status = 'connecting';
   const q = qrcode(0, 'M'); q.addData(net.url); q.make(); net.qr = q;
   const peer = new Peer(net.id, { debug: 1 });
@@ -308,10 +201,10 @@ function openRoom() {
     net.status = 'error'; net.error = err.type; console.warn('phones:', err.type, err);
   });
 }
-function sendTo(ctl, msg) { if (ctl.conn && ctl.conn.open) ctl.conn.send(msg); }
-function broadcast(msg) { for (const c of phones.values()) sendTo(c, msg); }
-function acceptPhone(conn) {
-  conn.on('data', msg => {
+function sendTo(ctl: Loose, msg: unknown): void { if (ctl.conn && ctl.conn.open) ctl.conn.send(msg); }
+function broadcast(msg: unknown): void { for (const c of phones.values()) sendTo(c, msg); }
+function acceptPhone(conn: Loose): void {
+  conn.on('data', (msg: Loose) => {
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') {
       const cid = String(msg.id || conn.peer).slice(0, 40);
@@ -333,7 +226,7 @@ function acceptPhone(conn) {
     const c = conn.ctl;
     if (!c || c.conn !== conn) return;
     if (msg.t === 'in') {
-      const cl = v => Math.max(-1, Math.min(1, Number(v) || 0));
+      const cl = (v: Loose) => Math.max(-1, Math.min(1, Number(v) || 0));
       c.mx = cl(msg.mx); c.my = cl(msg.my); c.use = !!msg.hold;
       if ((msg.g | 0) > c.grabN) c.grabN = msg.g | 0;
       if ((msg.u | 0) > c.useN) c.useN = msg.u | 0;
@@ -341,76 +234,73 @@ function acceptPhone(conn) {
     else if (msg.t === 'cheer') net.cheer = true;
   });
   conn.on('close', () => { const c = conn.ctl; if (c && c.conn === conn) { c.conn = null; c.mx = c.my = 0; c.use = false; } });
-  conn.on('error', e => console.warn('phone link:', e));
+  conn.on('error', (e: Loose) => console.warn('phone link:', e));
 }
-function drawQr(q, x, y, size) { // white card with a quiet zone, modules snapped to whole pixels
+function drawQr(q: QRCode, x: number, y: number, size: number): number { // white card with a quiet zone, modules snapped to whole pixels
   const n = q.getModuleCount(), cell = Math.max(1, Math.floor(size / (n + 4))), s = cell * (n + 4);
   ctx.fillStyle = '#ffffff'; rrect(x, y, s, s, 8); ctx.fill();
   ctx.fillStyle = '#0b0f1a';
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) ctx.fillRect(x + (c + 2) * cell, y + (r + 2) * cell, cell, cell);
   return s;
 }
-function roomLabel() {
+function roomLabel(): string {
   return net.status === 'open' ? `room ${net.id.slice(4)}` : net.status === 'connecting' ? 'opening room…' : `phones offline (${net.error || 'no network'})`;
 }
 
 // ---- Items ------------------------------------------------------------------------------
 let nextId = 1;
-function makeItem(kind, x, y, z = 0) {
+function makeItem(kind: string, x: number, y: number, z = 0): Loose {
   const it = { id: nextId++, kind, chopped: false, chop: 0, soup: null, contents: [], cook: 0, burnt: false,
     x, y, z, vx: 0, vy: 0, vz: 0, at: 'floor', tr: -1, tc: -1, spin: 0, spinV: 0, floated: false, doneSaid: false,
     by: [], bp: 0 };
   state.items.push(it);
   return it;
 }
-const isIngr = it => it.kind === 'tomato' || it.kind === 'kelp';
-const tileAt = (r, c) => (r >= 0 && r < ROWS && c >= 0 && c < COLS) ? state.tiles[r][c] : null;
-const solid = t => t && t.type !== '.';
-function detach(it) {
+const isIngr = (it: Loose): boolean => it.kind === 'tomato' || it.kind === 'kelp';
+const tileAt = (r: number, c: number): Loose => (r >= 0 && r < ROWS && c >= 0 && c < COLS) ? state.tiles[r][c] : null;
+const solid = (t: Loose): boolean => t && t.type !== '.';
+function detach(it: Loose): void {
   if (it.tr >= 0) { const t = tileAt(it.tr, it.tc); if (t && t.item === it) t.item = null; }
   it.tr = it.tc = -1;
 }
-function removeItem(it) {
+function removeItem(it: Loose): void {
   detach(it);
   const i = state.items.indexOf(it); if (i >= 0) state.items.splice(i, 1);
-  state.players.forEach(p => { if (p.held === it) p.held = null; });
+  state.players.forEach((p: Loose) => { if (p.held === it) p.held = null; });
 }
-function placeOnTile(it, t) {
+function placeOnTile(it: Loose, t: Loose): void {
   detach(it); t.item = it; it.at = 'counter'; it.tr = t.r; it.tc = t.c;
   it.x = t.c + 0.5; it.y = t.r + 0.5; it.z = CH; it.vx = it.vy = it.vz = 0; it.spin = 0; it.bp = 0;
 }
-function canPlace(t, it) {
+function canPlace(t: Loose, it: Loose): boolean {
   if (!t || t.item) return false;
   if (t.type === '#' || isBelt(t)) return true;
   if (t.type === 'B') return isIngr(it);
   if (t.type === 'S') return it.kind === 'pot';
   return false;
 }
-function setAir(it, vx, vy, vz) {
+function setAir(it: Loose, vx: number, vy: number, vz: number): void {
   detach(it); it.at = 'air'; it.vx = vx; it.vy = vy; it.vz = vz; it.spinV = (rng() * 2 - 1) * 3;
 }
-function potDone(pot) { return pot.contents.length >= tune.pot_size && pot.cook >= tune.cook_time && !pot.burnt; }
-function soupOf(pot) {
-  const tom = pot.contents.filter(k => k === 'tomato').length;
-  return tom === pot.contents.length ? 'red' : tom === 0 ? 'green' : 'mixed';
-}
-function credit(it, ...names) { for (const n of names) if (n && !it.by.includes(n)) it.by.push(n); }
-function addToPot(pot, ing, p) {
+function potDone(pot: Loose): boolean { return isPotDone(pot.contents.length, pot.cook, pot.burnt, tune.pot_size, tune.cook_time); }
+function soupOf(pot: Loose): SoupType { return soupOfContents(pot.contents); }
+function credit(it: Loose, ...names: (string | null | undefined)[]): void { for (const n of names) if (n && !it.by.includes(n)) it.by.push(n); }
+function addToPot(pot: Loose, ing: Loose, p: Loose): boolean {
   if (pot.burnt || pot.contents.length >= tune.pot_size || !ing.chopped) return false;
   pot.contents.push(ing.kind); pot.cook = 0; pot.doneSaid = false; credit(pot, ...ing.by, p && p.r.name);
   removeItem(ing); sfx.plop();
   return true;
 }
-function fillBowl(bowl, pot, p) {
+function fillBowl(bowl: Loose, pot: Loose, p: Loose): void {
   bowl.soup = soupOf(pot); credit(bowl, ...pot.by, p && p.r.name); pot.by = [];
   pot.contents = []; pot.cook = 0; pot.doneSaid = false; sfx.pick();
 }
-function trashItem(it) { // returns true if the item is gone
+function trashItem(it: Loose): boolean { // returns true if the item is gone
   if (it.kind === 'pot') { it.contents = []; it.cook = 0; it.burnt = false; it.doneSaid = false; it.by = []; sweep(400, 80, 0.3, 'sine', 0.2); return false; }
   if (it.kind === 'bowl' && it.soup) { it.soup = null; it.by = []; sweep(400, 80, 0.3, 'sine', 0.2); return false; }
   removeItem(it); sweep(400, 80, 0.3, 'sine', 0.2); return true;
 }
-function toFloorNear(it) { // an item that cannot rest on a counter slides off to the nearest floor
+function toFloorNear(it: Loose): void { // an item that cannot rest on a counter slides off to the nearest floor
   let best = null, bd = 1e9;
   const r0 = Math.floor(it.y), c0 = Math.floor(it.x);
   for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
@@ -423,16 +313,16 @@ function toFloorNear(it) { // an item that cannot rest on a counter slides off t
 }
 
 // ---- Orders, scoring ----------------------------------------------------------------------
-function addOrder(type) {
+function addOrder(type?: string): void {
   if (!type) type = level.soups[Math.floor(rng() * level.soups.length)];
   state.orders.push({ id: state.orderN++, type, t: tune.order_patience, max: tune.order_patience, born: state.t });
 }
-function deliver(bowl, p) {
-  const matches = state.orders.filter(o => o.type === bowl.soup);
+function deliver(bowl: Loose, p: Loose): boolean {
+  const matches = state.orders.filter((o: Loose) => o.type === bowl.soup);
   if (!matches.length) return false;
-  const o = matches.reduce((a, b) => (a.t < b.t ? a : b));
+  const o = matches.reduce((a: Loose, b: Loose) => (a.t < b.t ? a : b));
   state.orders.splice(state.orders.indexOf(o), 1);
-  const pts = tune.points_base + Math.round(tune.tip_max * Math.max(0, o.t / o.max));
+  const pts = deliveryPoints(tune.points_base, tune.tip_max, o.t, o.max);
   state.score += pts; state.delivered++;
   if (p) p.delivered++; else state.spaceDeliveries++;
   credit(bowl, p && p.r.name); // shared credit: everyone who chopped, cooked, plated or served it
@@ -442,12 +332,12 @@ function deliver(bowl, p) {
   events.push({ type: 'deliver', soup: bowl.soup, pts, by: p ? p.r.name : 'space' });
   return true;
 }
-function popup(x, y, s, color) { state.popups.push({ x, y, s, color, t: 0 }); }
+function popup(x: number, y: number, s: string, color: string): void { state.popups.push({ x, y, s, color, t: 0 }); }
 
 // ---- Scenes ---------------------------------------------------------------------------
-let scene, state;
-function reset() {
-  seed = (Number(params.get('seed')) || CONFIG.seed) + LV * 1000;
+let scene: string, state: Loose;
+function reset(): void {
+  setSeed(seedFrom(CONFIG.seed) + LV * 1000);
   nextId = 1;
   level = LEVELS[LV]; MAP = level.map; ROWS = MAP.length; COLS = MAP[0].length; X0 = (W - COLS * TS) / 2;
   state = {
@@ -467,19 +357,19 @@ function reset() {
     if (t.type === 'I') state.intakeOut = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dr, dc]) => tileAt(t.r + dr, t.c + dc)).find(isBelt) || null;
     if (t.type === 'V') state.vent = { x: t.c + 0.5, y: t.r + 0.5, t };
   }
-  state.tiles.flat().filter(t => t.type === 'S').forEach(t => placeOnTile(makeItem('pot', 0, 0), t));
+  state.tiles.flat().filter((t: Loose) => t.type === 'S').forEach((t: Loose) => placeOnTile(makeItem('pot', 0, 0), t));
   state.players = roster.map(makePlayer);
   if (roster.length === 1 && tune.bot_partner >= 1) state.players.push(makePlayer({ i: 4, ctl: { kind: 'bot' }, name: 'BOLT', bot: true }));
   addOrder('red');
 }
-function startShift(i) { LV = i; reset(); scene = 'play'; events.push({ type: 'shift', shift: i + 1 }); }
+function startShift(i: number): void { LV = i; reset(); scene = 'play'; events.push({ type: 'shift', shift: i + 1 }); }
 
-function facingTile(p) {
+function facingTile(p: Loose): Loose {
   const ax = Math.abs(p.fx) >= Math.abs(p.fy);
   const px = p.x + (ax ? Math.sign(p.fx) * 0.72 : 0), py = p.y + (ax ? 0 : Math.sign(p.fy) * 0.72);
   return tileAt(Math.floor(py), Math.floor(px));
 }
-function looseNear(p, filter) {
+function looseNear(p: Loose, filter?: (it: Loose) => boolean): Loose {
   let best = null, bd = tune.reach;
   for (const it of state.items) {
     if (it.at !== 'floor' && it.at !== 'air') continue;
@@ -491,19 +381,19 @@ function looseNear(p, filter) {
   }
   return best;
 }
-function hold(p, it) {
+function hold(p: Loose, it: Loose): void {
   if (it.at === 'air' && !state.g.on) { p.catches++; state.catches++; popup(it.x, it.y - 0.3, 'catch!', '#9fe8ff'); }
   if (isIngr(it) || it.kind === 'bowl') credit(it, p.r.name);
   detach(it); it.at = 'held'; it.vx = it.vy = it.vz = 0; it.spin = 0; p.held = it; sfx.pick();
 }
-function combine(held, other, p) { // held item meets another item: true if something happened
+function combine(held: Loose, other: Loose, p: Loose): boolean { // held item meets another item: true if something happened
   if (other.kind === 'pot' && isIngr(held)) return addToPot(other, held, p);
   if (held.kind === 'pot' && isIngr(other)) return addToPot(held, other, p);
   if (other.kind === 'pot' && held.kind === 'bowl' && !held.soup && potDone(other)) { fillBowl(held, other, p); return true; }
   if (held.kind === 'pot' && other.kind === 'bowl' && !other.soup && potDone(held)) { fillBowl(other, held, p); return true; }
   return false;
 }
-function interact(p, T) {
+function interact(p: Loose, T: Loose): void {
   const zeroG = !state.g.on;
   if (p.held) {
     const it = p.held;
@@ -539,7 +429,7 @@ function interact(p, T) {
   }
 }
 
-function startZeroG() {
+function startZeroG(): void {
   const g = state.g;
   g.on = false; g.warn = false; g.end = state.t + LT('zero_g_duration'); g.failures++;
   state.shake = 0.5; state.flash = 1;
@@ -552,13 +442,13 @@ function startZeroG() {
   for (const p of state.players) { p.vx += (rng() * 2 - 1) * 0.8; p.vy += (rng() * 2 - 1) * 0.8; }
   sfx.gravOff(); events.push({ type: 'zero-g', t: state.t }); broadcast({ t: 'grav', on: false });
 }
-function endZeroG() {
+function endZeroG(): void {
   const g = state.g;
   g.on = true; g.next = state.t + LT('zero_g_interval') + (rng() * 2 - 1) * tune.zero_g_jitter;
   state.shake = 0.35; sfx.gravOn(); events.push({ type: 'gravity', t: state.t }); broadcast({ t: 'grav', on: true });
 }
 
-function collideTiles(o, rad, bounce) {
+function collideTiles(o: Loose, rad: number, bounce: number): void {
   const r0 = Math.floor(o.y) - 1, c0 = Math.floor(o.x) - 1;
   for (let r = r0; r <= r0 + 2; r++) for (let c = c0; c <= c0 + 2; c++) {
     const t = tileAt(r, c);
@@ -574,7 +464,7 @@ function collideTiles(o, rad, bounce) {
   }
 }
 
-function updatePlayer(p, dt) {
+function updatePlayer(p: Loose, dt: number): void {
   const inp = p.bot ? botControl(p, dt) : readInput(p), zeroG = !state.g.on;
   const m = Math.hypot(inp.mx, inp.my);
   if (m > 0.2) { p.fx = inp.mx / m; p.fy = inp.my / m; }
@@ -625,20 +515,19 @@ function updatePlayer(p, dt) {
 // A prep cook: fetches whatever floats off, chops, keeps the pots fed for the open orders, and
 // plates a finished soup only after it has sat a moment (so a person gets there first). It holds
 // on to what it carries while gravity is off, and it is pushed aside by people, never the reverse.
-const fitsRecipe = (recipe, contents) => { const r = recipe.slice(); for (const k of contents) { const i = r.indexOf(k); if (i < 0) return false; r.splice(i, 1); } return true; };
-function wantedTypes() { // open orders not already covered by a full pot or a filled bowl
-  const types = state.orders.slice().sort((a, b) => a.t - b.t).map(o => o.type);
-  const take = ty => { const i = types.indexOf(ty); if (i >= 0) types.splice(i, 1); };
+function wantedTypes(): SoupType[] { // open orders not already covered by a full pot or a filled bowl
+  const types = state.orders.slice().sort((a: Loose, b: Loose) => a.t - b.t).map((o: Loose) => o.type);
+  const take = (ty: Loose) => { const i = types.indexOf(ty); if (i >= 0) types.splice(i, 1); };
   for (const it of state.items) {
     if (it.kind === 'pot' && !it.burnt && it.contents.length >= tune.pot_size) take(soupOf(it));
     if (it.kind === 'bowl' && it.soup) take(it.soup);
   }
   return types;
 }
-function potPlan() { // each pot that is not full, with the soup it should become and what it lacks
+function potPlan(): { pot: Loose; type: SoupType; lack: string[] }[] { // each pot that is not full, with the soup it should become and what it lacks
   const types = wantedTypes(), plans = [];
-  const pots = state.items.filter(it => it.kind === 'pot' && it.at === 'counter' && !it.burnt && it.contents.length < tune.pot_size)
-    .sort((a, b) => b.contents.length - a.contents.length);
+  const pots = state.items.filter((it: Loose) => it.kind === 'pot' && it.at === 'counter' && !it.burnt && it.contents.length < tune.pot_size)
+    .sort((a: Loose, b: Loose) => b.contents.length - a.contents.length);
   for (const pot of pots) {
     const i = types.findIndex(ty => fitsRecipe(SOUPS[ty].recipe, pot.contents));
     if (i < 0) continue;
@@ -648,13 +537,13 @@ function potPlan() { // each pot that is not full, with the soup it should becom
   }
   return plans;
 }
-function neededKinds() {
+function neededKinds(): string[] {
   const need = potPlan().flatMap(pl => pl.lack);
-  const inFlight = state.items.filter(it => isIngr(it) && ((it.at === 'counter' && tileAt(it.tr, it.tc).type === 'B') || (it.at === 'held' && !state.players.some(p => p.bot && p.held === it))));
+  const inFlight = state.items.filter((it: Loose) => isIngr(it) && ((it.at === 'counter' && tileAt(it.tr, it.tc).type === 'B') || (it.at === 'held' && !state.players.some((p: Loose) => p.bot && p.held === it))));
   for (const it of inFlight) { const i = need.indexOf(it.kind); if (i >= 0) need.splice(i, 1); }
   return need;
 }
-function nearestTile(p, f) {
+function nearestTile(p: Loose, f: (t: Loose) => boolean): Loose {
   let best = null, bd = 1e9;
   for (const t of state.tiles.flat()) {
     if (!t.stand || !f(t)) continue;
@@ -663,10 +552,10 @@ function nearestTile(p, f) {
   }
   return best;
 }
-const heldBy = it => state.players.some(p => p.held === it);
-function botDecide(p) {
+const heldBy = (it: Loose): boolean => state.players.some((p: Loose) => p.held === it);
+function botDecide(p: Loose): Loose {
   const zg = !state.g.on, H = p.held;
-  const tileGoal = (t, act) => (t ? { t, act } : null);
+  const tileGoal = (t: Loose, act: Loose) => (t ? { t, act } : null);
   if (H) {
     if (zg) return null; // keep it safe until gravity is back
     if (isIngr(H)) {
@@ -676,13 +565,13 @@ function botDecide(p) {
       return tileGoal(nearestTile(p, t => t.type === '#' && !t.item), 'place');
     }
     if (H.kind === 'bowl') {
-      if (H.soup) return tileGoal(nearestTile(p, t => t.type === (state.orders.some(o => o.type === H.soup) ? 'H' : 'X')), 'place');
-      const dp = state.items.find(it => it.kind === 'pot' && it.at === 'counter' && potDone(it));
+      if (H.soup) return tileGoal(nearestTile(p, t => t.type === (state.orders.some((o: Loose) => o.type === H.soup) ? 'H' : 'X')), 'place');
+      const dp = state.items.find((it: Loose) => it.kind === 'pot' && it.at === 'counter' && potDone(it));
       return tileGoal(dp ? tileAt(dp.tr, dp.tc) : nearestTile(p, t => t.type === '#' && !t.item), 'place');
     }
     if (H.kind === 'pot') {
       if (H.burnt) return tileGoal(nearestTile(p, t => t.type === 'X'), 'place');
-      return tileGoal(nearestTile(p, t => (t.type === 'S' || t.type === '#') && !t.item && (t.type === 'S' || !state.tiles.flat().some(s => s.type === 'S' && !s.item))), 'place');
+      return tileGoal(nearestTile(p, t => (t.type === 'S' || t.type === '#') && !t.item && (t.type === 'S' || !state.tiles.flat().some((s: Loose) => s.type === 'S' && !s.item))), 'place');
     }
     return null;
   }
@@ -700,7 +589,7 @@ function botDecide(p) {
   if (zg) return null;
   const burnt = nearestTile(p, t => t.item && t.item.kind === 'pot' && t.item.burnt);
   if (burnt) return tileGoal(burnt, 'grab');
-  const ready = state.items.some(it => it.kind === 'pot' && it.at === 'counter' && potDone(it) && it.cook - tune.cook_time >= tune.bot_serve_delay);
+  const ready = state.items.some((it: Loose) => it.kind === 'pot' && it.at === 'counter' && potDone(it) && it.cook - tune.cook_time >= tune.bot_serve_delay);
   if (ready) {
     const bowl = nearestTile(p, t => t.item && t.item.kind === 'bowl' && !t.item.soup);
     return tileGoal(bowl || nearestTile(p, t => t.type === 'W'), 'grab');
@@ -708,22 +597,22 @@ function botDecide(p) {
   const board = nearestTile(p, t => t.type === 'B' && t.item && isIngr(t.item) && !t.item.chopped);
   if (board) return tileGoal(board, 'chop');
   for (const k of need) {
-    const on = (t, chopped) => t.item && t.item.kind === k && t.item.chopped === chopped && t.type !== 'B';
+    const on = (t: Loose, chopped: Loose) => t.item && t.item.kind === k && t.item.chopped === chopped && t.type !== 'B';
     const src = nearestTile(p, t => on(t, true)) || nearestTile(p, t => t.type === 'B' && t.item && t.item.kind === k && t.item.chopped)
       || nearestTile(p, t => on(t, false)) || nearestTile(p, t => t.type === (k === 'tomato' ? 'T' : 'K'));
     if (src) return tileGoal(src, 'grab');
   }
-  const loosePot = nearestTile(p, t => t.type === '#' && t.item && t.item.kind === 'pot' && state.tiles.flat().some(s => s.type === 'S' && !s.item));
+  const loosePot = nearestTile(p, t => t.type === '#' && t.item && t.item.kind === 'pot' && state.tiles.flat().some((s: Loose) => s.type === 'S' && !s.item));
   if (loosePot) return tileGoal(loosePot, 'grab');
   return null;
 }
-function bfs(p, isGoal) { // over floor tiles from the bot's tile; returns [[r, c], ...] or null
+function bfs(p: Loose, isGoal: (r: number, c: number) => boolean): Cell[] | null { // over floor tiles from the bot's tile; returns [[r, c], ...] or null
   let sr = Math.floor(p.y), sc = Math.floor(p.x);
   const s0 = tileAt(sr, sc); if (!s0 || solid(s0)) return null;
-  const key = (r, c) => r * COLS + c, prev = new Map([[key(sr, sc), null]]), q = [[sr, sc]];
+  const key = (r: number, c: number): number => r * COLS + c, prev = new Map<number, Cell | null>([[key(sr, sc), null]]), q: Cell[] = [[sr, sc]];
   while (q.length) {
-    const cur = q.shift();
-    if (isGoal(cur[0], cur[1])) { const path = []; let n = cur; while (n) { path.unshift(n); n = prev.get(key(n[0], n[1])); } return path; }
+    const cur = q.shift()!;
+    if (isGoal(cur[0], cur[1])) { const path: Cell[] = []; let n: Cell | null | undefined = cur; while (n) { path.unshift(n); n = prev.get(key(n[0], n[1])); } return path; }
     for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nr = cur[0] + dr, nc = cur[1] + dc, t = tileAt(nr, nc);
       if (!t || solid(t) || prev.has(key(nr, nc))) continue;
@@ -732,7 +621,7 @@ function bfs(p, isGoal) { // over floor tiles from the bot's tile; returns [[r, 
   }
   return null;
 }
-function botControl(p, dt) {
+function botControl(p: Loose, dt: number): Input {
   const inp = { mx: 0, my: 0, grab: false, useHeld: false, usePressed: false };
   p.think -= dt; p.actCd -= dt;
   if (p.goal && p.goal.it && (heldBy(p.goal.it) || !state.items.includes(p.goal.it))) p.think = 0;
@@ -745,7 +634,7 @@ function botControl(p, dt) {
     if (g && !p.path) p.goal = null;
   }
   const g = p.goal, zg = !state.g.on;
-  const steer = (dx, dy, slow = 1) => { // move along (dx, dy); in zero-g, thrust to match a gentle drift
+  const steer = (dx: number, dy: number, slow = 1) => { // move along (dx, dy); in zero-g, thrust to match a gentle drift
     const d = Math.hypot(dx, dy) || 1;
     if (!zg) { inp.mx = dx / d * slow; inp.my = dy / d * slow; return; }
     let ax = (dx / d * 2.4 * slow - p.vx) * 1.2, ay = (dy / d * 2.4 * slow - p.vy) * 1.2;
@@ -755,7 +644,7 @@ function botControl(p, dt) {
   if (!g || !p.path) return inp;
   // follow the path's tile centres until the last one
   const here = [Math.floor(p.y), Math.floor(p.x)];
-  let i = p.path.findIndex(n => n[0] === here[0] && n[1] === here[1]);
+  let i = p.path.findIndex((n: Loose) => n[0] === here[0] && n[1] === here[1]);
   if (i < 0) i = 0;
   const atEnd = i >= p.path.length - 1;
   if (g.it) {
@@ -780,13 +669,13 @@ function botControl(p, dt) {
   return inp;
 }
 
-function loseItem(it) { // pulled out through the hull breach
+function loseItem(it: Loose): void { // pulled out through the hull breach
   if (it.kind === 'pot') state.respawns.push({ t: state.t + tune.pot_respawn });
   removeItem(it); state.lost++; sfx.lost();
   popup(state.vent.x, state.vent.y - 1.2, 'lost to space!', '#ff8a9a');
   events.push({ type: 'lost', kind: it.kind });
 }
-function updateBelts(dt) {
+function updateBelts(dt: number): void {
   if (state.intakeOut) { // the cargo bay drops a crate of something on the belt
     state.intakeT -= dt; state.intakeFlash = Math.max(0, state.intakeFlash - dt);
     if (state.intakeT <= 0) {
@@ -809,7 +698,7 @@ function updateBelts(dt) {
   }
 }
 
-function updateItem(it, dt) {
+function updateItem(it: Loose, dt: number): void {
   if (it.at !== 'air') return;
   const zeroG = !state.g.on;
   if (zeroG) {
@@ -844,7 +733,7 @@ function updateItem(it, dt) {
   const surf = solid(t) ? CH : 0;
   if (it.z <= surf && it.vz <= 0) land(it, t);
 }
-function land(it, t) {
+function land(it: Loose, t: Loose): void {
   if (solid(t)) {
     if (t.type === 'H' && it.kind === 'bowl' && it.soup && deliver(it, null)) return;
     if (t.type === 'X') { if (trashItem(it)) return; toFloorNear(it); return; }
@@ -856,7 +745,7 @@ function land(it, t) {
   if (it.floated) { state.drops++; it.floated = false; }
 }
 
-function updatePlay(dt) {
+function updatePlay(dt: number): void {
   state.t += dt;
   const g = state.g;
   // gravity schedule
@@ -866,15 +755,14 @@ function updatePlay(dt) {
     if (state.t >= g.next) startZeroG();
   } else if (state.t >= g.end) endZeroG();
   // orders
-  const k = Math.min(1, state.t / tune.shift_length);
   if (state.t >= state.nextOrder) {
     if (state.orders.length < tune.max_orders) addOrder();
-    state.nextOrder = state.t + LT('order_interval_start') + (LT('order_interval_end') - LT('order_interval_start')) * k;
+    state.nextOrder = nextOrderAt(state.t, tune.shift_length, LT('order_interval_start'), LT('order_interval_end'));
   }
   updateBelts(dt);
   for (const rs of state.respawns.slice()) { // a replacement pot for one lost to space
     if (state.t < rs.t) continue;
-    const st = state.tiles.flat().find(t => t.type === 'S' && !t.item);
+    const st = state.tiles.flat().find((t: Loose) => t.type === 'S' && !t.item);
     if (st) { placeOnTile(makeItem('pot', 0, 0), st); state.respawns.splice(state.respawns.indexOf(rs), 1); popup(st.c + 0.5, st.r, 'new pot', '#9fe8ff'); }
     else rs.t = state.t + 1;
   }
@@ -882,7 +770,7 @@ function updatePlay(dt) {
     o.t -= dt;
     if (o.t <= 0) {
       state.orders.splice(state.orders.indexOf(o), 1);
-      state.score = Math.max(0, state.score - tune.missed_penalty); state.missed++;
+      state.score = scoreAfterMiss(state.score, tune.missed_penalty); state.missed++;
       popup(7.5, -0.6, `order missed  -${tune.missed_penalty}`, '#ff6b6b'); sfx.missed();
       if (!state.orders.length) state.nextOrder = Math.min(state.nextOrder, state.t + 2);
     }
@@ -915,11 +803,11 @@ function updatePlay(dt) {
     }
   }
   for (const pp of state.popups) pp.t += dt;
-  state.popups = state.popups.filter(pp => pp.t < 1.4);
+  state.popups = state.popups.filter((pp: Loose) => pp.t < 1.4);
   state.shake = Math.max(0, state.shake - dt); state.flash = Math.max(0, state.flash - dt * 2);
   if (state.t >= tune.shift_length) {
     state.ended = true;
-    state.stars = state.score >= LT('star3') ? 3 : state.score >= LT('star2') ? 2 : state.score >= LT('star1') ? 1 : 0;
+    state.stars = starsFor(state.score, LT('star1'), LT('star2'), LT('star3'));
     state.gained = `${state.stars} star${state.stars === 1 ? '' : 's'}`;
     const wasLocked = LV < 2 && !unlocked(LV + 1);
     state.newBest = state.score > progress.best[LV] && progress.best[LV] > 0;
@@ -933,12 +821,9 @@ function updatePlay(dt) {
 }
 
 // ---- Drawing: figures ---------------------------------------------------------------------
-function lineStyle(w = 2.5) { ctx.lineWidth = w; ctx.strokeStyle = '#141824'; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; }
-function rrect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
-function ellipse(x, y, rx, ry) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); }
-function shadow(x, y, rx, a = 0.35) { ctx.fillStyle = `rgba(5,8,15,${a})`; ellipse(x, y, rx, rx * 0.4); ctx.fill(); }
+function shadow(x: number, y: number, rx: number, a = 0.35): void { ctx.fillStyle = `rgba(5,8,15,${a})`; ellipse(x, y, rx, rx * 0.4); ctx.fill(); }
 
-function drawTomato(x, y, chopped, s = 1) {
+function drawTomato(x: number, y: number, chopped: boolean, s = 1): void {
   ctx.save(); ctx.translate(x, y); ctx.scale(s, s); lineStyle(2);
   if (!chopped) {
     ctx.fillStyle = '#e8473b'; ellipse(0, -11, 12, 11); ctx.fill(); ctx.stroke();
@@ -954,7 +839,7 @@ function drawTomato(x, y, chopped, s = 1) {
   }
   ctx.restore();
 }
-function drawKelp(x, y, chopped, s = 1) {
+function drawKelp(x: number, y: number, chopped: boolean, s = 1): void {
   ctx.save(); ctx.translate(x, y); ctx.scale(s, s); lineStyle(2);
   if (!chopped) {
     ctx.fillStyle = '#3aa64a'; ctx.beginPath(); ctx.moveTo(-4, 0);
@@ -969,7 +854,7 @@ function drawKelp(x, y, chopped, s = 1) {
   }
   ctx.restore();
 }
-function drawBowl(x, y, soup, s = 1) {
+function drawBowl(x: number, y: number, soup: SoupType | null, s = 1): void {
   ctx.save(); ctx.translate(x, y); ctx.scale(s, s); lineStyle(2);
   ctx.fillStyle = '#e8eef5'; ctx.beginPath(); ctx.ellipse(0, -9, 14, 5, 0, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.moveTo(-14, -9); ctx.quadraticCurveTo(-13, 2, 0, 2); ctx.quadraticCurveTo(13, 2, 14, -9); ctx.fill(); ctx.stroke();
@@ -979,7 +864,7 @@ function drawBowl(x, y, soup, s = 1) {
   ctx.fillStyle = '#5ec8ff'; rrect(-14, -8, 28, 2, 1); ctx.globalAlpha = 0.6; ctx.fill(); ctx.globalAlpha = 1; // space-age stripe
   ctx.restore();
 }
-function drawPot(x, y, pot, s = 1) {
+function drawPot(x: number, y: number, pot: Loose, s = 1): void {
   ctx.save(); ctx.translate(x, y); ctx.scale(s, s); lineStyle(2.5);
   ctx.fillStyle = '#3b4352'; rrect(-21, -14, 6, 5, 2); ctx.fill(); ctx.stroke(); rrect(15, -14, 6, 5, 2); ctx.fill(); ctx.stroke();
   ctx.fillStyle = pot.burnt ? '#2a2a2a' : '#5b6577';
@@ -997,7 +882,7 @@ function drawPot(x, y, pot, s = 1) {
   if (pot.burnt) { ctx.fillStyle = 'rgba(60,60,60,0.6)'; for (let i = 0; i < 3; i++) { const b = (state.t * 0.8 + i * 0.33) % 1; ellipse(-6 + i * 6 + Math.sin(b * 6) * 3, -26 - b * 22, 4 + b * 5, 4 + b * 5); ctx.fill(); } }
   ctx.restore();
 }
-function drawItem(it, x, y, s = 1) {
+function drawItem(it: Loose, x: number, y: number, s = 1): void {
   if (it.spin && it.at === 'air') { ctx.save(); ctx.translate(x, y - 10 * s); ctx.rotate(it.spin); ctx.translate(-x, -(y - 10 * s)); }
   if (it.kind === 'tomato') drawTomato(x, y, it.chopped, s);
   else if (it.kind === 'kelp') drawKelp(x, y, it.chopped, s);
@@ -1005,7 +890,7 @@ function drawItem(it, x, y, s = 1) {
   else if (it.kind === 'pot') drawPot(x, y, it, s);
   if (it.spin && it.at === 'air') ctx.restore();
 }
-function drawItemUI(it, x, y) { // bars and contents above items
+function drawItemUI(it: Loose, x: number, y: number): void { // bars and contents above items
   if (isIngr(it) && it.chop > 0 && !it.chopped) bar(x, y - 34, it.chop, '#ffd23f');
   if (it.kind === 'pot') {
     const n = tune.pot_size;
@@ -1028,12 +913,12 @@ function drawItemUI(it, x, y) { // bars and contents above items
     }
   }
 }
-function bar(x, y, k, col) {
+function bar(x: number, y: number, k: number, col: string): void {
   ctx.fillStyle = '#10141f'; rrect(x - 22, y - 5, 44, 10, 5); ctx.fill();
   ctx.fillStyle = col; rrect(x - 20, y - 3, 40 * Math.min(1, k), 6, 3); ctx.fill();
 }
 
-function drawCook(p, x, y, z, i, s = 1) {
+function drawCook(p: Loose, x: number, y: number, z: number, i: number, s = 1): void {
   const col = COLORS[i], up = p.fy < -0.5 && Math.abs(p.fx) < 0.7;
   const cheer = p.cheerT > 0, hop = cheer ? Math.abs(Math.sin(p.cheerT * 9)) * 14 : 0;
   const lift = z * TZ + hop, bob = Math.abs(Math.sin(p.walk * 4)) * (z > 0.05 ? 0 : 3);
@@ -1079,15 +964,15 @@ function drawCook(p, x, y, z, i, s = 1) {
   if (cheer) drawSparkles(x, y - lift - 96, p.cheerT);
   if (s === 1) textOutlined(p.r ? p.r.name : '', x, y - lift - 100, 15, col.suit);
 }
-function starPath(x, y, ro, ri) { ctx.beginPath(); for (let j = 0; j < 10; j++) { const a = j * Math.PI / 5 - Math.PI / 2, r = j % 2 ? ri : ro; ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } ctx.closePath(); }
-function drawSparkles(x, y, t) {
+function starPath(x: number, y: number, ro: number, ri: number): void { ctx.beginPath(); for (let j = 0; j < 10; j++) { const a = j * Math.PI / 5 - Math.PI / 2, r = j % 2 ? ri : ro; ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } ctx.closePath(); }
+function drawSparkles(x: number, y: number, t: number): void {
   for (let k = 0; k < 3; k++) {
     const a = k * 2.1 + t * 4, r = 16 + (1 - t / tune.cheer_time) * 18;
     ctx.fillStyle = ['#ffe066', '#9fe8ff', '#ff9ad5'][k]; starPath(x + Math.cos(a) * r, y + Math.sin(a) * r * 0.6, 6, 2.5); ctx.fill();
   }
 }
 // BOLT: a hover robot with a screen face, so it never reads as one of the suited cooks.
-function drawBot(p, x, y, z, s = 1) {
+function drawBot(p: Loose, x: number, y: number, z: number, s = 1): void {
   const col = COLORS[4], up = p.fy < -0.5 && Math.abs(p.fx) < 0.7, cheer = p.cheerT > 0;
   const hover = 6 + Math.sin((state ? state.t : 0) * 5) * 2, lift = z * TZ + hover + (cheer ? Math.abs(Math.sin(p.cheerT * 9)) * 12 : 0);
   shadow(x, y, 20 * s, 0.32);
@@ -1106,7 +991,7 @@ function drawBot(p, x, y, z, s = 1) {
   if (!up) { ctx.fillStyle = '#2a3142'; rrect(-8, -31, 16, 11, 3); ctx.fill(); ctx.fillStyle = '#5be37a'; ctx.fillRect(-5, -27, 4, 3); ctx.fillStyle = '#ff5a3d'; ctx.fillRect(2, -27, 4, 3); }
   // arms: thin rods with claw hands
   lineStyle(2.5); ctx.strokeStyle = '#141824';
-  const arm = (sx0, ex, ey) => { ctx.lineWidth = 5; ctx.strokeStyle = '#141824'; ctx.beginPath(); ctx.moveTo(sx0, -28); ctx.lineTo(ex, ey); ctx.stroke(); ctx.lineWidth = 2.5; ctx.strokeStyle = '#8a95a8'; ctx.beginPath(); ctx.moveTo(sx0, -28); ctx.lineTo(ex, ey); ctx.stroke(); lineStyle(2); ctx.beginPath(); ctx.arc(ex, ey, 4, 0.6, Math.PI * 2 - 0.6); ctx.stroke(); };
+  const arm = (sx0: number, ex: number, ey: number) => { ctx.lineWidth = 5; ctx.strokeStyle = '#141824'; ctx.beginPath(); ctx.moveTo(sx0, -28); ctx.lineTo(ex, ey); ctx.stroke(); ctx.lineWidth = 2.5; ctx.strokeStyle = '#8a95a8'; ctx.beginPath(); ctx.moveTo(sx0, -28); ctx.lineTo(ex, ey); ctx.stroke(); lineStyle(2); ctx.beginPath(); ctx.arc(ex, ey, 4, 0.6, Math.PI * 2 - 0.6); ctx.stroke(); };
   if (cheer) { arm(-15, -24, -54); arm(15, 24, -54); }
   else if (p.held || p.chopping) { const ay = p.chopping ? Math.sin(state.t * 30) * 4 : 0; arm(-15, hx - 10, -22 + ay); arm(15, hx + 10, -22 + ay); }
   else { arm(-15, -22, -12); arm(15, 22, -12); }
@@ -1131,10 +1016,10 @@ function drawBot(p, x, y, z, s = 1) {
   if (cheer) drawSparkles(x, y - lift - 92, p.cheerT);
   if (s === 1) textOutlined(p.r.name, x, y - lift - 98, 15, '#e8eef5');
 }
-function drawAnyCook(p, x, y, z, i, s = 1) { if (p.bot) drawBot(p, x, y, z, s); else drawCook(p, x, y, z, i, s); }
+function drawAnyCook(p: Loose, x: number, y: number, z: number, i: number, s = 1): void { if (p.bot) drawBot(p, x, y, z, s); else drawCook(p, x, y, z, i, s); }
 
 // ---- Drawing: the galley ------------------------------------------------------------------
-function drawWall() {
+function drawWall(): void {
   const top = 98, bot = sy(0, CH) + 2;
   const g = ctx.createLinearGradient(0, top, 0, bot); g.addColorStop(0, '#3a4560'); g.addColorStop(1, '#2a3248');
   ctx.fillStyle = g; ctx.fillRect(X0 - 10, top, COLS * TS + 20, bot - top);
@@ -1190,7 +1075,7 @@ function drawWall() {
     if (on) { const gl = ctx.createRadialGradient(x, y, 2, x, y, 60); gl.addColorStop(0, 'rgba(255,60,60,0.5)'); gl.addColorStop(1, 'rgba(255,60,60,0)'); ctx.fillStyle = gl; ctx.fillRect(x - 60, y - 60, 120, 120); }
   });
 }
-function drawFloor() {
+function drawFloor(): void {
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
     if (MAP[r][c] !== '.') continue; // the floor
     ctx.fillStyle = (r + c) % 2 ? '#2f394c' : '#344056';
@@ -1207,13 +1092,13 @@ function drawFloor() {
     ctx.setLineDash([]); ctx.restore();
   }
 }
-function boxFaces(c, r, top, front, h = CH) {
+function boxFaces(c: number, r: number, top: string, front: string, h = CH): { x: number; yt: number; yf: number } {
   const x = sx(c), yt = sy(r, h), yf = sy(r + 1, h);
   ctx.fillStyle = front; ctx.fillRect(x, yf, TS, h * TZ);
   ctx.fillStyle = top; ctx.fillRect(x, yt, TS, TD);
   return { x, yt, yf };
 }
-function drawCounter(t, targets) {
+function drawCounter(t: Loose, targets: Map<Loose, Loose>): void {
   const { r, c, type } = t;
   const { x, yt, yf } = boxFaces(c, r, '#c3ccd8', '#4a5468');
   // trim and edges
@@ -1293,7 +1178,7 @@ function drawCounter(t, targets) {
   if (tg) { ctx.strokeStyle = tg; ctx.lineWidth = 3; ctx.globalAlpha = 0.9; rrect(x + 2, yt + 1, TS - 4, TD - 2, 6); ctx.stroke(); ctx.globalAlpha = 1; }
 }
 
-function drawWorld() {
+function drawWorld(): void {
   const targets = new Map();
   for (const p of state.players) if (p.target && solid(p.target)) targets.set(p.target, COLORS[p.r.i].suit);
   drawWall(); drawFloor();
@@ -1310,7 +1195,7 @@ function drawWorld() {
   list.sort((a, b) => a.k - b.k);
   for (const e of list) e.f();
   // items in the air: above everything, shadows first
-  const air = state.items.filter(it => it.at === 'air').sort((a, b) => a.y - b.y);
+  const air = state.items.filter((it: Loose) => it.at === 'air').sort((a: Loose, b: Loose) => a.y - b.y);
   for (const it of air) {
     const t = tileAt(Math.floor(it.y), Math.floor(it.x)), base = solid(t) ? CH : 0;
     shadow(sx(it.x), sy(it.y, base), 11, Math.max(0.08, 0.3 - (it.z - base) * 0.12));
@@ -1339,7 +1224,7 @@ function drawWorld() {
   for (const pp of state.popups) textOutlined(pp.s, sx(pp.x), sy(pp.y) - 30 - pp.t * 40, 22, pp.color);
 }
 
-function drawLight() {
+function drawLight(): void {
   const g = ctx.createRadialGradient(W / 2, H * 0.55, 60, W / 2, H * 0.55, 700);
   g.addColorStop(0, 'rgba(255,190,120,0.10)'); g.addColorStop(1, 'rgba(0,0,20,0.35)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -1350,9 +1235,9 @@ function drawLight() {
   if (state.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${state.flash * 0.35})`; ctx.fillRect(0, 0, W, H); }
 }
 
-function drawHUD() {
+function drawHUD(): void {
   // orders
-  state.orders.forEach((o, i) => {
+  state.orders.forEach((o: Loose, i: number) => {
     const x = 210 + i * 150 + Math.max(0, 0.35 - (state.t - o.born)) * 1400, y = 10, w = 140, h = 78, sp = SOUPS[o.type]; // new cards slide in
     const k = Math.max(0, o.t / o.max), urgent = k < 0.25 && Math.floor(state.t * 4) % 2;
     ctx.fillStyle = urgent ? '#5a2430' : '#1d2436'; rrect(x, y, w, h, 10); ctx.fill(); lineStyle(3); ctx.stroke();
@@ -1399,12 +1284,12 @@ function drawHUD() {
   }
 }
 
-function cheerAll() { // one key: every cook cheers, BOLT too
+function cheerAll(): void { // one key: every cook cheers, BOLT too
   for (const p of state.players) p.cheerT = tune.cheer_time;
   sfx.cheer(); events.push({ type: 'cheer' });
 }
-function anyStart() { return pressed('Enter') || pressed('Space') || net.start || padsNow.some((gp, i) => gp && (padEdge(i, 9) || padEdge(i, 0))); }
-function drawMiniMap(lv, x, y, cw, chh) { // a small plan of a galley for the select cards
+function anyStart(): boolean { return pressed('Enter') || pressed('Space') || net.start || padsNow.some((gp, i) => gp && (padEdge(i, 9) || padEdge(i, 0))); }
+function drawMiniMap(lv: Loose, x: number, y: number, cw: number, chh: number): void { // a small plan of a galley for the select cards
   const m = LEVELS[lv].map;
   for (let r = 0; r < m.length; r++) for (let c = 0; c < m[0].length; c++) {
     const k = m[r][c], px = x + c * cw, py = y + r * chh;
@@ -1414,26 +1299,26 @@ function drawMiniMap(lv, x, y, cw, chh) { // a small plan of a galley for the se
     if (DIRS[k]) { ctx.fillStyle = '#7d889c'; const [dx, dy] = DIRS[k]; ctx.fillRect(px + cw / 2 - 1.5 + dx * 3, py + chh / 2 - 1.5 + dy * 2, 3, 3); }
   }
 }
-function drawPadlock(x, y) {
+function drawPadlock(x: number, y: number): void {
   lineStyle(3); ctx.strokeStyle = '#9aa7b8'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(x, y - 10, 14, Math.PI, 0); ctx.stroke();
   lineStyle(3); ctx.fillStyle = '#ffd23f'; rrect(x - 22, y - 10, 44, 34, 6); ctx.fill(); ctx.stroke();
   ctx.fillStyle = '#141824'; ellipse(x, y + 4, 4, 4); ctx.fill(); ctx.fillRect(x - 2, y + 4, 4, 10);
 }
-function drawStarIcon(x, y, ro, on) { starPath(x, y, ro, ro * 0.43); ctx.fillStyle = on ? '#ffd23f' : '#2a3142'; ctx.fill(); lineStyle(Math.max(2, ro / 10)); ctx.stroke(); }
+function drawStarIcon(x: number, y: number, ro: number, on: boolean): void { starPath(x, y, ro, ro * 0.43); ctx.fillStyle = on ? '#ffd23f' : '#2a3142'; ctx.fill(); lineStyle(Math.max(2, ro / 10)); ctx.stroke(); }
 
-const scenes = {
+const scenes: Record<string, { update(dt: number): void; draw(): void }> = {
   figures: {
-    update(dt) { state.t += dt; },
+    update(dt: number) { state.t += dt; },
     draw() {
       clear('#1a2030'); text('Figures', W / 2, 40, 36, '#e8eef5');
-      const fake = (i, fx, fy, held, bot) => ({ r: { i, name: bot ? 'BOLT' : 'P' + (i + 1) }, fx, fy, walk: 0, tilt: 0, held, chopping: false, cheerT: 0, bot });
+      const fake = (i: number, fx: number, fy: number, held: Loose, bot?: boolean) => ({ r: { i, name: bot ? 'BOLT' : 'P' + (i + 1) }, fx, fy, walk: 0, tilt: 0, held, chopping: false, cheerT: 0, bot });
       const bowlSoup = { kind: 'bowl', soup: 'red', at: 'held' };
       [fake(0, 0, 1, null), fake(1, 1, 0, bowlSoup), fake(2, 0, -1, null), fake(3, -1, 0, null), fake(4, 0, 1, null, true)].forEach((p, i) => {
         drawAnyCook(p, 170 + i * 235, 230, 0, p.r.i);
         text(['cook P1', 'cook P2 (holding soup)', 'cook P3 (back)', 'cook P4', 'BOLT, the bot partner'][i], 170 + i * 235, 262, 14, '#c3ccd8');
       });
       const pot = { kind: 'pot', contents: ['tomato', 'kelp'], cook: 3, burnt: false };
-      const items = [['tomato', () => drawTomato(0, 0, false, 1.5)], ['tomato chopped', () => drawTomato(0, 0, true, 1.5)],
+      const items: [string, () => void][] = [['tomato', () => drawTomato(0, 0, false, 1.5)], ['tomato chopped', () => drawTomato(0, 0, true, 1.5)],
         ['kelp', () => drawKelp(0, 0, false, 1.5)], ['kelp chopped', () => drawKelp(0, 0, true, 1.5)],
         ['bowl', () => drawBowl(0, 0, null, 1.5)], ['Red Nebula', () => drawBowl(0, 0, 'red', 1.5)],
         ['Comet Kelp', () => drawBowl(0, 0, 'green', 1.5)], ['Eclipse Mix', () => drawBowl(0, 0, 'mixed', 1.5)],
@@ -1472,7 +1357,7 @@ const scenes = {
         if (r) drawCook({ r, fx: 0, fy: 1, walk: 0, tilt: Math.sin(state.t * 2 + i) * 0.08, held: null, chopping: false, cheerT: 0 }, x, y + 40, 0.15 + 0.06 * Math.sin(state.t * 2 + i), i);
         else if (i === 1 && tune.bot_partner >= 1) { drawBot({ r: { name: 'BOLT' }, fx: 0, fy: 1, tilt: 0, held: null, chopping: false, cheerT: 0 }, x, y + 40, 0.1, 4); }
         else text(i === 0 ? 'press F' : i === 1 ? 'press  .' : 'gamepad A', x, y - 10, 18, '#6b7690', 'center', 'normal');
-        const sub = r ? ({ pad: 'gamepad', keys: 'keyboard' }[r.ctl.kind] || (r.ctl.conn ? 'phone' : 'phone (lost)')) : i === 1 && tune.bot_partner >= 1 ? 'helps if you play alone' : 'to join';
+        const sub = r ? (({ pad: 'gamepad', keys: 'keyboard' } as Record<string, string>)[r.ctl.kind] || (r.ctl.conn ? 'phone' : 'phone (lost)')) : i === 1 && tune.bot_partner >= 1 ? 'helps if you play alone' : 'to join';
         text(sub, x, y + 62, 14, r ? '#c3ccd8' : '#6b7690', 'center', 'normal');
         if (!r && i === 1 && tune.bot_partner >= 1) text('press  .  to take the seat', x, y - 94, 13, '#6b7690', 'center', 'normal');
       }
@@ -1530,7 +1415,7 @@ const scenes = {
     },
   },
   play: {
-    update(dt) {
+    update(dt: number) {
       if (pressed('KeyP') || pressed('Escape')) { scene = 'pause'; return; }
       checkJoins(true);
       if (pressed('KeyC') || net.cheer || padsNow.some((gp, i) => gp && padEdge(i, 3))) cheerAll();
@@ -1570,7 +1455,7 @@ const scenes = {
         `Gravity failures: ${state.g.failures}  ·  Mid-air catches: ${state.catches}  ·  Dropped: ${state.drops}${level.breach ? `  ·  Lost to space: ${state.lost}` : ''}`];
       lines.forEach((l, i) => text(l, W / 2, 380 + i * 28, 18, '#e8eef5', 'center', 'normal'));
       const n = state.players.length, gap = Math.min(230, 1100 / Math.max(1, n));
-      state.players.forEach((p, i) => { // each cook's part: every soup they touched counts for them
+      state.players.forEach((p: Loose, i: number) => { // each cook's part: every soup they touched counts for them
         const x = W / 2 + (i - (n - 1) / 2) * gap;
         textOutlined(p.r.name, x, 470, 22, COLORS[p.r.i].suit);
         text(`helped on ${p.helped} soup${p.helped === 1 ? '' : 's'}`, x, 498, 15, '#e8eef5', 'center', 'normal');
@@ -1584,38 +1469,40 @@ const scenes = {
 };
 
 // ---- Loop: fixed step, frame time clamped ---------------------------------------------
-function step() {
+function step(): void {
   readPads();
   if (pressed('KeyM')) { setMuted(!muted); hit.delete('KeyM'); }
   scenes[scene].update(STEP); hit.clear(); savePads(); net.start = false; net.cheer = false;
   if (scene !== net.scene) { net.scene = scene; broadcast({ t: 'scene', scene }); }
 }
-let last, acc = 0, ALPHA = 1;
-function tick() {
+let last = 0, acc = 0, ALPHA = 1;
+function tick(): void {
   const now = clock.now();
   acc += Math.min(now - last, 0.25); last = now;
   while (acc >= STEP) { step(); acc -= STEP; }
   ALPHA = acc / STEP;
   drawFrame();
 }
-function drawFrame() { ctx.setTransform(baseTransform); scenes[scene].draw(); }
-function frame() { tick(); requestAnimationFrame(frame); }
-function timer() { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
+function drawFrame(): void { ctx.setTransform(baseTransform); scenes[scene].draw(); }
+function frame(): void { tick(); requestAnimationFrame(frame); }
+function timer(): void { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
 
 // ---- What a check can read and drive (?manual=1 stops the loop; players never see it) ----
-window.game = {
+install({
   get scene() { return scene; },
   get state() { return state; },
-  press(code) { hit.add(code); },
-  hold(code, on) { on ? down.add(code) : down.delete(code); },
+  press(code: string) { hit.add(code); },
+  hold(code: string, on: boolean) { if (on) down.add(code); else down.delete(code); },
   get events() { return events; },
-  get room() { return { id: net.id, url: net.url, status: net.status, phones: phones.size }; },
-  get shift() { return LV + 1; },
   step(n = 1, draw = true, alpha = 1) {
     for (let i = 0; i < n; i++) step();
     if (draw) { ALPHA = alpha; drawFrame(); }
   },
-};
+});
+Object.defineProperties(window.game!, {
+  room: { get: () => ({ id: net.id, url: net.url, status: net.status, phones: phones.size }) },
+  shift: { get: () => LV + 1 },
+});
 
 openRoom();
 LV = Math.max(0, Math.min(2, (Number(params.get('shift')) || 1) - 1));
@@ -1623,5 +1510,5 @@ reset();
 scene = params.get('scene') || 'title';
 if (scene === 'play' && !roster.length) { join(KEYSETS[0]); if (params.get('solo') !== '1') join(KEYSETS[1]); reset(); }
 last = clock.now();
-if (params.get('manual') === '1') drawFrame();
+if (manual) drawFrame();
 else { requestAnimationFrame(frame); setInterval(timer, 50); }
