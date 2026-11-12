@@ -1,0 +1,198 @@
+<!doctype html>
+<!-- PROTOTYPE - NOT FOR PRODUCTION -->
+<!-- Question: Do three shifts, each with its own twist, keep zero-g cooking fresh for 10 minutes, alone with a bot or with friends? -->
+<!-- Date: 2026-11-12 -->
+<!-- Phone controller: opened from the QR code on the game screen (?room=ssg-xxxxx). It joins the
+     game's PeerJS room and streams a stick plus two buttons over a WebRTC data channel. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Galley Controller</title>
+<style>
+  :root { --me: #ff8a3d; --bg: #0b0f1a; --panel: #1d2436; --ink: #e8eef5; --dim: #9aa7b8; --line: #141824; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+    font-family: "Trebuchet MS", Verdana, sans-serif; user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none; touch-action: none; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); transition: background .3s; }
+  body.zerog { background: #0d1636; }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; font-size: 15px; }
+  #dot { width: 12px; height: 12px; border-radius: 50%; background: #ffd23f; flex: none; }
+  #dot.ok { background: #5be37a; } #dot.bad { background: #ff5a3d; }
+  #status { color: var(--dim); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #me { font-weight: bold; font-size: 20px; color: var(--me); }
+  #grav { font-weight: bold; color: #7ab8ff; display: none; }
+  body.zerog #grav { display: inline; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stickZone { flex: 1; position: relative; }
+  #pad { flex: 1; position: relative; display: grid; place-items: center; }
+  .base { position: absolute; width: 150px; height: 150px; margin: -75px 0 0 -75px; border-radius: 50%;
+    border: 3px solid #2f3a52; background: radial-gradient(circle, #1d2436 0%, #141a28 70%); pointer-events: none; }
+  .knob { position: absolute; width: 74px; height: 74px; margin: -37px 0 0 -37px; border-radius: 50%;
+    background: var(--me); border: 3px solid var(--line); box-shadow: 0 4px 0 rgba(0,0,0,.35); pointer-events: none; }
+  .hint { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; color: #4a5468; font-size: 13px; pointer-events: none; }
+  .btn { position: absolute; border-radius: 50%; border: 4px solid var(--line); color: #10141f; font-weight: bold;
+    display: grid; place-items: center; text-align: center; line-height: 1.1; box-shadow: 0 6px 0 rgba(0,0,0,.4);
+    transition: transform .05s, box-shadow .05s; }
+  .btn small { display: block; font-size: 12px; font-weight: normal; opacity: .75; }
+  .btn.down { transform: translateY(5px) scale(.96); box-shadow: 0 1px 0 rgba(0,0,0,.4); filter: brightness(1.15); }
+  #grab { width: 132px; height: 132px; background: #5be37a; font-size: 22px; right: 18%; bottom: 14%; }
+  #use { width: 108px; height: 108px; background: #ffb36b; font-size: 17px; right: 52%; top: 12%; }
+  #cheer { width: 72px; height: 72px; background: #ffd23f; font-size: 14px; right: 6%; top: 8%; }
+  #overlay { position: fixed; inset: 0; background: rgba(8,10,18,.88); display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px; padding: 24px; text-align: center; z-index: 5; }
+  #overlay.show { display: flex; }
+  #overlay h1 { margin: 0; font-size: 26px; color: #ffb36b; }
+  #overlay p { margin: 0; color: var(--dim); max-width: 420px; }
+  #overlay button { font: inherit; font-weight: bold; font-size: 22px; padding: 16px 34px; border-radius: 40px;
+    border: 4px solid var(--line); background: var(--me); color: #10141f; box-shadow: 0 6px 0 rgba(0,0,0,.4); }
+  #overlay button:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,.4); }
+  @media (orientation: portrait) {
+    main { flex-direction: column-reverse; }
+    #grab { right: 12%; bottom: auto; top: 22%; }
+    #use { right: auto; left: 12%; top: 46%; }
+    #cheer { right: auto; left: 8%; top: 8%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span id="dot"></span><span id="me"></span><span id="grav">ZERO-G!</span><span id="status">connecting…</span>
+</header>
+<main>
+  <div id="stickZone"><div class="base" id="base"></div><div class="knob" id="knob"></div><div class="hint">drag to move</div></div>
+  <div id="pad">
+    <div class="btn" id="use">CHOP<small>dash</small></div>
+    <div class="btn" id="grab">GRAB<small>place · throw</small></div>
+    <div class="btn" id="cheer">CHEER</div>
+  </div>
+</main>
+<div id="overlay"><h1 id="ovTitle"></h1><p id="ovText"></p><button id="ovBtn"></button></div>
+
+<script src="vendor/peerjs.min.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const room = new URLSearchParams(location.search).get('room');
+const input = { mx: 0, my: 0, hold: false, g: 0, u: 0 }; // g/u: running press counts
+let peer = null, conn = null, linked = false, scene = '', dirty = true, openTimer = 0;
+
+// A stable id per phone, so a dropped connection rejoins as the same cook.
+let cid;
+try { cid = localStorage.getItem('galley-cid'); } catch (e) {}
+if (!cid) { cid = 'c' + Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(16).padStart(2, '0')).join(''); try { localStorage.setItem('galley-cid', cid); } catch (e) {} }
+
+// ---- Screen state ------------------------------------------------------------------------
+function setStatus(s, kind) { $('status').textContent = s; $('dot').className = kind || ''; }
+function overlay(title, textMsg, btn, onTap) {
+  if (!title) { $('overlay').classList.remove('show'); return; }
+  $('ovTitle').textContent = title; $('ovText').textContent = textMsg || '';
+  $('ovBtn').textContent = btn || ''; $('ovBtn').style.display = btn ? '' : 'none'; $('ovBtn').onclick = onTap || null;
+  $('overlay').classList.add('show');
+}
+function buzz(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} }
+function showScene() {
+  if (!linked) return;
+  if (scene === 'title') overlay('You’re in!', 'Waiting for everyone to join. Anyone can pick a galley.', 'Pick a galley', () => send({ t: 'start' }));
+  else if (scene === 'select') overlay('Pick a galley', 'Choose a shift on the big screen, or start the one picked.', 'Start shift', () => send({ t: 'start' }));
+  else if (scene === 'results') overlay('Shift over!', 'Check the big screen for your stars.', 'Next shift', () => send({ t: 'start' }));
+  else if (scene === 'pause') overlay('Paused', 'The game is paused on the big screen.');
+  else overlay(null);
+}
+
+// ---- Link ---------------------------------------------------------------------------------
+function send(msg) { if (conn && conn.open) { try { conn.send(msg); } catch (e) {} } }
+function fail(title, why) {
+  linked = false; setStatus(why, 'bad'); clearTimeout(openTimer);
+  overlay(title, why, 'Try again', () => location.reload());
+}
+function connect() {
+  if (!room) { fail('No game', 'Scan the QR code on the game screen to join.'); return; }
+  if (!window.Peer) { fail('Can’t load', 'The controller script did not load. Reload the page.'); return; }
+  setStatus('connecting to ' + room.slice(4) + '…');
+  if (peer) peer.destroy();
+  peer = new Peer({ debug: 1 });
+  openTimer = setTimeout(() => { if (!linked) fail('Can’t reach the game', 'Is the game still open? Both devices need internet.'); }, 15000);
+  peer.on('open', () => {
+    conn = peer.connect(room);
+    conn.on('open', () => send({ t: 'hello', id: cid, g: input.g, u: input.u }));
+    conn.on('data', onMessage);
+    conn.on('close', () => { if (linked) fail('Disconnected', 'Lost the game. Tap to rejoin as the same cook.'); });
+    conn.on('error', e => console.warn('link:', e));
+  });
+  peer.on('error', e => {
+    if (e.type === 'peer-unavailable') fail('Game not found', 'That room is closed. Scan the QR code on the game screen again.');
+    else if (!linked) fail('Can’t connect', 'Network problem (' + e.type + '). Check your connection.');
+  });
+}
+function onMessage(m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'you') {
+    linked = true; clearTimeout(openTimer); scene = m.scene;
+    document.documentElement.style.setProperty('--me', m.color);
+    $('me').textContent = m.name; setStatus('connected', 'ok'); buzz(40);
+    document.body.classList.toggle('zerog', m.gravity === false);
+    showScene();
+  } else if (m.t === 'full') {
+    fail('Galley is full', 'Four cooks are already in. Wait for the next game.');
+  } else if (m.t === 'scene') { scene = m.scene; showScene(); }
+  else if (m.t === 'grav') { document.body.classList.toggle('zerog', !m.on); buzz(m.on ? 60 : [90, 50, 90, 50, 90]); }
+}
+// Stream state on every change, and as a heartbeat so a lost packet heals itself.
+function flush(force) { if (linked && (dirty || force)) { send({ t: 'in', mx: +input.mx.toFixed(3), my: +input.my.toFixed(3), hold: input.hold, g: input.g, u: input.u }); dirty = false; } }
+setInterval(() => flush(true), 100);
+function changed() { dirty = true; flush(); }
+
+// ---- Stick: floating, starts wherever the thumb lands ---------------------------------------
+const zone = $('stickZone'), base = $('base'), knob = $('knob'), RAD = 60;
+let stickId = null, ox = 0, oy = 0;
+function placeStick(x, y, kx, ky) { base.style.left = x + 'px'; base.style.top = y + 'px'; knob.style.left = kx + 'px'; knob.style.top = ky + 'px'; }
+function restStick() { const r = zone.getBoundingClientRect(); placeStick(r.width / 2, r.height / 2, r.width / 2, r.height / 2); }
+zone.addEventListener('pointerdown', e => {
+  if (stickId !== null) return;
+  stickId = e.pointerId; zone.setPointerCapture(e.pointerId);
+  const r = zone.getBoundingClientRect(); ox = e.clientX - r.left; oy = e.clientY - r.top;
+  placeStick(ox, oy, ox, oy); wake();
+});
+zone.addEventListener('pointermove', e => {
+  if (e.pointerId !== stickId) return;
+  const r = zone.getBoundingClientRect();
+  let dx = e.clientX - r.left - ox, dy = e.clientY - r.top - oy;
+  const d = Math.hypot(dx, dy);
+  if (d > RAD) { dx *= RAD / d; dy *= RAD / d; }
+  knob.style.left = ox + dx + 'px'; knob.style.top = oy + dy + 'px';
+  const k = Math.hypot(dx, dy) / RAD < 0.15 ? 0 : 1; // small dead zone
+  input.mx = k * dx / RAD; input.my = k * dy / RAD; changed();
+});
+const endStick = e => { if (e.pointerId !== stickId) return; stickId = null; input.mx = input.my = 0; restStick(); changed(); };
+zone.addEventListener('pointerup', endStick); zone.addEventListener('pointercancel', endStick);
+addEventListener('resize', () => { if (stickId === null) restStick(); });
+restStick();
+
+// ---- Buttons --------------------------------------------------------------------------------
+function button(el, onDown, onUp) {
+  const ids = new Set();
+  el.addEventListener('pointerdown', e => { el.setPointerCapture(e.pointerId); ids.add(e.pointerId); el.classList.add('down'); buzz(12); wake(); onDown(); changed(); });
+  const up = e => { if (!ids.delete(e.pointerId)) return; if (!ids.size) { el.classList.remove('down'); onUp(); changed(); } };
+  el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+}
+button($('grab'), () => { input.g++; }, () => {});
+button($('use'), () => { input.u++; input.hold = true; }, () => { input.hold = false; });
+button($('cheer'), () => { send({ t: 'cheer' }); }, () => {});
+addEventListener('contextmenu', e => e.preventDefault());
+
+// Keep the screen on while playing; rejoin when the phone wakes up.
+let lock = null;
+function wake() { if (!lock && navigator.wakeLock) navigator.wakeLock.request('screen').then(l => { lock = l; l.onrelease = () => { lock = null; }; }).catch(() => {}); }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (room && conn && !conn.open && !$('overlay').classList.contains('show')) location.reload();
+});
+
+connect();
+</script>
+</body>
+</html>

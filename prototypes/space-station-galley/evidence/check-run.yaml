@@ -1,0 +1,125 @@
+# The one-shot's small check (check-run/1).
+# Written by one-shot-check.sh --record: the results are /prototype's reading of
+# evidence/self-check.tsv; never edited by hand.
+kind: check-run/1
+engine: web
+browser: "HeadlessChrome/157.0.0.0"
+time: "2026-11-12 18:53:34"
+checks:
+  - id: boots
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: shot
+    result: pass
+    evidence:
+      - "evidence/play.png"
+  - id: outlines
+    result: pass
+    evidence:
+      - "evidence/figures.png"
+  - id: brief-words
+    result: pass
+    evidence:
+      - "evidence/brief-words.tsv"
+  - id: emoji
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: nearest-game
+    result: pass
+    evidence:
+      - "evidence/nearest-game.txt"
+brief_checklist:
+  - id: L1
+    result: pass
+    evidence: "evidence/shift3-breach.png"
+    item: "Look: the spike's tilted 2.5D cartoon galley: pale steel counters with orange trim, a dark plated floor, portholes onto a ringed planet and stars, chunky orange-suited cooks; red alarm lights pulse before gravity cuts out. Each galley has its own trim colour and view out the window. Every figure drawn, no emoji, no plain circles."
+  - id: L2
+    result: pass
+    evidence: "index.html:161"
+    item: "References: the spike prototype (look, zero-g rules, phone controllers); the co-op cooking genre for orders and handoffs."
+  - id: L3
+    result: pass
+    evidence: "evidence/play.png"
+    item: "View: 2.5D · Camera: one room that fits the window, tilted about 50°"
+  - id: F1
+    result: pass
+    evidence: "index.html:161"
+    item: "Three shifts in three galley layouts, each with its own twist (none, conveyor, breach vent)"
+  - id: F2
+    result: pass
+    evidence: "evidence/shift1-60s.png"
+    item: "Zero-g failures: things float, cooks drift and bounce, catch and throw"
+  - id: F3
+    result: pass
+    evidence: "index.html:446"
+    item: "Chop → pot → cook → plate → serve, with three soups and burning"
+  - id: F4
+    result: pass
+    evidence: "index.html:683"
+    item: "Bot partner played alone: chops, carries, fetches what floats off, never blocks"
+  - id: F5
+    result: pass
+    evidence: "index.html:251"
+    item: "1–4 players on keyboard, gamepads, or phones by QR"
+  - id: F6
+    result: pass
+    evidence: "evidence/select.png"
+    item: "Shift-select screen with stars, and an end screen showing each cook's part (shared credit)"
+  - id: F7
+    result: pass
+    evidence: "index.html:1418"
+    item: "One cheer key: every cook cheers (team signals)"
+  - id: M1
+    result: pass
+    evidence: "evidence/play.png"
+    item: "Shift 1 opens on a calm galley with one recipe (Red Nebula soup)."
+  - id: M2
+    result: pass
+    evidence: "index.html:1372"
+    item: "The first order card slides in; you grab a tomato, chop it at the board, drop it in a pot, it cooks on the stove, you plate it in a bowl and serve it at the hatch for points and a tip."
+  - id: M3
+    result: pass
+    evidence: "evidence/play.png"
+    item: "The bot partner (or P2) starts chopping too."
+  - id: M4
+    result: pass
+    evidence: "evidence/shift1-60s.png"
+    item: "At about 55 s the alarm sounds, lights go red, \"GRAVITY OFFLINE!\", and your half-chopped tomatoes drift off; you push off a counter and grab one mid-air."
+  - id: M5
+    result: pass
+    evidence: "index.html:863"
+    item: "Gravity comes back and everything falls where it is."
+  - id: C1
+    result: pass
+    evidence: "config.js:64"
+    item: "Shift 1 is gentle: two soups, one gravity failure early."
+  - id: C2
+    result: pass
+    evidence: "evidence/shift2-zero-g.png"
+    item: "Shift 2 adds a conveyor that carries ingredients in from the cargo bay and keeps moving in zero-g."
+  - id: C3
+    result: pass
+    evidence: "evidence/shift3-breach.png"
+    item: "Shift 3 adds a hull breach vent that pulls anything floating toward it, lost unless caught."
+  - id: C4
+    result: not_run
+    mark: not assessed
+    why: "orders speed up and gravity fails more often per shift (s1/s2/s3 values); whether shift 3 needs split work is a feel, for play"
+    evidence: "config.js:64"
+    item: "Orders come faster and gravity fails more often; by shift 3 you miss orders unless you split the work."
+  - id: C5
+    result: pass
+    evidence: "index.html:901"
+    item: "A missed order costs points."
+  - id: C6
+    result: pass
+    evidence: "index.html:942"
+    item: "Stars unlock the next shift (1 star is enough); replaying for 3 stars is the long tail."
+measures:
+  - id: step-time
+    value: 0.900
+    unit: ms
+    by: browser
+    detail: "mean 0.009 ms, slowest 0.900 ms, 726 steps"

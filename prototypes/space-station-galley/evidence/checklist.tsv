@@ -1,0 +1,21 @@
+L1	pass	evidence/shift3-breach.png	steel counters, plated floor, portholes, suited cooks, red alarm lights in zero-g; trim teal on shift 2 and pink on shift 3, with a gas giant and freighter, then a nebula with rocks, out the windows
+L2	pass	index.html:161	built on the spike's kitchen, zero-g rules and phone controller (controller.html); orders and handoffs from co-op cooking
+L3	pass	evidence/play.png	one room fits the 1280x720 window, tilted box-world projection
+F1	pass	index.html:161	LEVELS: Orbit Galley (none), Cargo Deck (belt + cargo bay), Hull Breach Bay (vent); shots shift1-60s, shift2-zero-g, shift3-breach
+F2	pass	evidence/shift1-60s.png	pots and ingredients floating with shadows, cooks drift; catch and throw in interact (index.html:522)
+F3	pass	index.html:446	chop, pot, cook, bowl, hatch; three soups (Red Nebula, Comet Kelp, Eclipse Mix); burning at index.html:930; scores 22 and 25 in the solo shots
+F4	pass	index.html:683	BOLT chops (play.png), carries pots (shift3-breach.png), fetches needed floating items, serves; pushed aside by people (index.html:913)
+F5	pass	index.html:251	keyboard P1/P2 and gamepads join on the title; phones by QR (index.html:329, controller.html); phones not re-tried on a device in this build
+F6	pass	evidence/select.png	select screen with stars, best score and locks; end screen lists each cook's helped/served/catches (index.html:1568)
+F7	pass	index.html:1418	C, gamepad Y or the phone's CHEER button: every cook including BOLT jumps with arms up and sparkles
+M1	pass	evidence/play.png	shift 1 opens with one Red Nebula order (index.html:489), banner names the shift
+M2	pass	index.html:1372	order cards slide in; full chop to serve path with tip (index.html:446)
+M3	pass	evidence/play.png	BOLT chopping a tomato at 12 s
+M4	pass	evidence/shift1-60s.png	first failure at 55 s (s1_first_zero_g), alarm lights and GRAVITY OFFLINE banner, items float; mid-air catch counted in hold()
+M5	pass	index.html:863	land(): items fall where they are when gravity returns
+C1	pass	config.js:64	shift 1 has two soups, the slowest orders and the fewest failures (first at 55 s, then every 70 s)
+C2	pass	evidence/shift2-zero-g.png	belt keeps running and the cargo bay keeps dropping crates in zero-g; they float off
+C3	pass	evidence/shift3-breach.png	vent opens in zero-g, pulls floating items and cooks; items within breach_radius are lost (index.html:799)
+C4	not_assessed	config.js:64	orders speed up and gravity fails more often per shift (s1/s2/s3 values); whether shift 3 needs split work is a feel, for play
+C5	pass	index.html:901	missed order costs missed_penalty points
+C6	pass	index.html:942	stars saved per shift; 1 star unlocks the next (unlocked()); select shows stars to chase

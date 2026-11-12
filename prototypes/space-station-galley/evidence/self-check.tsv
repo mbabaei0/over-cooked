@@ -1,0 +1,55 @@
+time	2026-11-12 18:53:34
+keep	lines	0	pinned	0
+briefword	2.5D	shown	evidence/play.png
+checklist	L1	pass	evidence/shift3-breach.png	Look: the spike's tilted 2.5D cartoon galley: pale steel counters with orange trim, a dark plated floor, portholes onto a ringed planet and stars, chunky orange-suited cooks; red alarm lights pulse before gravity cuts out. Each galley has its own trim colour and view out the window. Every figure drawn, no emoji, no plain circles.	steel counters, plated floor, portholes, suited cooks, red alarm lights in zero-g; trim teal on shift 2 and pink on shift 3, with a gas giant and freighter, then a nebula with rocks, out the windows
+checklist	L2	pass	index.html:161	References: the spike prototype (look, zero-g rules, phone controllers); the co-op cooking genre for orders and handoffs.	built on the spike's kitchen, zero-g rules and phone controller (controller.html); orders and handoffs from co-op cooking
+checklist	L3	pass	evidence/play.png	View: 2.5D · Camera: one room that fits the window, tilted about 50°	one room fits the 1280x720 window, tilted box-world projection
+checklist	F1	pass	index.html:161	Three shifts in three galley layouts, each with its own twist (none, conveyor, breach vent)	LEVELS: Orbit Galley (none), Cargo Deck (belt + cargo bay), Hull Breach Bay (vent); shots shift1-60s, shift2-zero-g, shift3-breach
+checklist	F2	pass	evidence/shift1-60s.png	Zero-g failures: things float, cooks drift and bounce, catch and throw	pots and ingredients floating with shadows, cooks drift; catch and throw in interact (index.html:522)
+checklist	F3	pass	index.html:446	Chop → pot → cook → plate → serve, with three soups and burning	chop, pot, cook, bowl, hatch; three soups (Red Nebula, Comet Kelp, Eclipse Mix); burning at index.html:930; scores 22 and 25 in the solo shots
+checklist	F4	pass	index.html:683	Bot partner played alone: chops, carries, fetches what floats off, never blocks	BOLT chops (play.png), carries pots (shift3-breach.png), fetches needed floating items, serves; pushed aside by people (index.html:913)
+checklist	F5	pass	index.html:251	1–4 players on keyboard, gamepads, or phones by QR	keyboard P1/P2 and gamepads join on the title; phones by QR (index.html:329, controller.html); phones not re-tried on a device in this build
+checklist	F6	pass	evidence/select.png	Shift-select screen with stars, and an end screen showing each cook's part (shared credit)	select screen with stars, best score and locks; end screen lists each cook's helped/served/catches (index.html:1568)
+checklist	F7	pass	index.html:1418	One cheer key: every cook cheers (team signals)	C, gamepad Y or the phone's CHEER button: every cook including BOLT jumps with arms up and sparkles
+checklist	M1	pass	evidence/play.png	Shift 1 opens on a calm galley with one recipe (Red Nebula soup).	shift 1 opens with one Red Nebula order (index.html:489), banner names the shift
+checklist	M2	pass	index.html:1372	The first order card slides in; you grab a tomato, chop it at the board, drop it in a pot, it cooks on the stove, you plate it in a bowl and serve it at the hatch for points and a tip.	order cards slide in; full chop to serve path with tip (index.html:446)
+checklist	M3	pass	evidence/play.png	The bot partner (or P2) starts chopping too.	BOLT chopping a tomato at 12 s
+checklist	M4	pass	evidence/shift1-60s.png	At about 55 s the alarm sounds, lights go red, "GRAVITY OFFLINE!", and your half-chopped tomatoes drift off; you push off a counter and grab one mid-air.	first failure at 55 s (s1_first_zero_g), alarm lights and GRAVITY OFFLINE banner, items float; mid-air catch counted in hold()
+checklist	M5	pass	index.html:863	Gravity comes back and everything falls where it is.	land(): items fall where they are when gravity returns
+checklist	C1	pass	config.js:64	Shift 1 is gentle: two soups, one gravity failure early.	shift 1 has two soups, the slowest orders and the fewest failures (first at 55 s, then every 70 s)
+checklist	C2	pass	evidence/shift2-zero-g.png	Shift 2 adds a conveyor that carries ingredients in from the cargo bay and keeps moving in zero-g.	belt keeps running and the cargo bay keeps dropping crates in zero-g; they float off
+checklist	C3	pass	evidence/shift3-breach.png	Shift 3 adds a hull breach vent that pulls anything floating toward it, lost unless caught.	vent opens in zero-g, pulls floating items and cooks; items within breach_radius are lost (index.html:799)
+checklist	C4	not_assessed	config.js:64	Orders come faster and gravity fails more often; by shift 3 you miss orders unless you split the work.	orders speed up and gravity fails more often per shift (s1/s2/s3 values); whether shift 3 needs split work is a feel, for play
+checklist	C5	pass	index.html:901	A missed order costs points.	missed order costs missed_penalty points
+checklist	C6	pass	index.html:942	Stars unlock the next shift (1 star is enough); replaying for 3 stars is the long tail.	stars saved per shift; 1 star unlocks the next (unlocked()); select shows stars to chase
+browser	HeadlessChrome/157.0.0.0
+scene	play	0	title
+scene	play	1	select
+scene	play	35	play
+digits	log	18px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 15px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 32px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 13px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	bold 34px "Trebuchet MS", Verdana, sans-serif	tabular	0
+digits	log	14px "Trebuchet MS", Verdana, sans-serif	tabular	0
+measure	step-time	play	0.009	0.900	726
+lane	play	stop	12.1	136
+uncaught	play	0
+text	play	canvas	228,226,262,238	20.7	15.75	inside	BOLT
+text	play	canvas	1073,338,1103,345	13.8	5.27	inside	TRASH
+text	play	canvas	1074,422,1102,429	13.8	8.42	inside	SERVE
+text	play	canvas	1074,464,1102,471	13.8	8.42	inside	SERVE
+text	play	canvas	720,452,734,463	20.7	7.84	inside	P1
+text	play	canvas	264,22,332,32	17.9	13.24	inside	Red Nebula
+text	play	canvas	414,22,482,34	17.9	13.24	inside	Comet Kelp
+text	play	canvas	82,26,120,36	17.9	6.33	inside	SCORE
+text	play	canvas	93,46,109,69	44.2	14.10	inside	0
+text	play	canvas	1140,26,1217,36	17.9	6.33	inside	SHIFT 1 OF 3
+text	play	canvas	1147,46,1211,70	44.2	15.75	inside	2:48
+text	play	canvas	563,676,737,692	30.4	11.13	inside	GRAVITY  ONLINE
+text	play	canvas	1204,680,1256,690	19.3	4.22	inside	C: cheer
+text	play	canvas	25,680,281,693	19.3	3.94	inside	P2: press .  to join   ·   gamepad: press A
+text	play	canvas	46,432,113,444	17.9	7.28	inside	scan to join
+screen	play	drawn
+shot	play	prototypes/space-station-galley/evidence/play.png
+responds	changed	278
